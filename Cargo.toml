@@ -1,0 +1,35 @@
+[package]
+name = "ixi-ci-server"
+version = "0.0.1"
+authors = [ "iximeow <me@iximeow.net>" ]
+license = "0BSD"
+edition = "2021"
+
+[dependencies]
+# warp = { version = "*", features = ["tls"] }
+axum = { version = "*" }
+axum-server = { version = "*", features = ["tls-rustls"] }
+handlebars = "*"
+libc = "*"
+serde = "*"
+serde_derive = "*"
+serde_json = "*"
+rand = "*"
+tokio = { version = "*", features = ["full"] }
+tracing = "*"
+tracing-subscriber = "*"
+http-body = "*"
+rusqlite = "*"
+http = "*"
+hmac = "*"
+hex = "*"
+sha2 = "*"
+reqwest = { version = "*", features = ["rustls-tls-native-roots"] }
+
+[[bin]]
+name = "ci_webserver"
+path = "src/main.rs"
+
+[[bin]]
+name = "ci_driver"
+path = "src/ci_driver.rs"
