@@ -3,11 +3,10 @@
 
 use tokio::spawn;
 use std::path::PathBuf;
-use serde_derive::{Deserialize, Serialize};
 use axum_server::tls_rustls::RustlsConfig;
 use axum::routing::*;
 use axum::Router;
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Response, Html};
 use std::net::SocketAddr;
 use axum::extract::{Path, State};
 use http_body::combinators::UnsyncBoxBody;
@@ -18,15 +17,22 @@ use axum::http::{StatusCode, Uri};
 use http::header::HeaderMap;
 
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 mod sql;
+mod notifier;
+mod dbctx;
 
-use rusqlite::{Connection, OptionalExtension};
+use sql::JobState;
+
+use dbctx::DbCtx;
+
+use rusqlite::OptionalExtension;
+
+const PSKS: &'static [&'static [u8]] = &[];
 
 #[derive(Copy, Clone, Debug)]
 enum GithubHookError {
@@ -96,14 +102,22 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
         return (StatusCode::OK, String::new());
     }
 
-    let remote_url = format!("https://github.com/{}.git", repo);
-    let (remote_id, repo_id): (u64, u64) = ctx.conn.lock().unwrap()
+    let remote_url = format!("https://www.github.com/{}.git", repo);
+    eprintln!("looking for remote url: {}", remote_url);
+    let (remote_id, repo_id): (u64, u64) = match ctx.conn.lock().unwrap()
         .query_row("select id, repo_id from remotes where remote_git_url=?1;", [&remote_url], |row| Ok((row.get(0).unwrap(), row.get(1).unwrap())))
-        .unwrap();
+        .optional()
+        .unwrap() {
+        Some(elems) => elems,
+        None => {
+            eprintln!("no remote registered for url {} (repo {})", remote_url, repo);
+            return (StatusCode::NOT_FOUND, String::new());
+        }
+    };
 
     let job_id = ctx.new_job(remote_id, &sha).unwrap();
 
-    let notifiers = ctx.notifiers_by_name(&repo).expect("can get notifiers");
+    let notifiers = ctx.notifiers_by_repo(repo_id).expect("can get notifiers");
 
     for notifier in notifiers {
         notifier.tell_pending_job(&ctx, repo_id, &sha, job_id).await.expect("can notify");
@@ -134,11 +148,78 @@ async fn handle_github_event(ctx: Arc<DbCtx>, owner: String, repo: String, event
 
 async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
     eprintln!("path: {}/{}, sha {}", path.0, path.1, path.2);
+    let remote_path = format!("{}/{}", path.0, path.1);
+    let sha = path.2;
+
+    let commit_id: Option<u64> = ctx.conn.lock().unwrap()
+        .query_row("select id from commits where sha=?1;", [&sha], |row| row.get(0))
+        .optional()
+        .expect("can query");
+
+    let commit_id: u64 = match commit_id {
+        Some(commit_id) => {
+            commit_id
+        },
+        None => {
+            return (StatusCode::NOT_FOUND, Html("<html><body>no such commit</body></html>".to_string()));
+        }
+    };
+
+    let (remote_id, repo_id): (u64, u64) = ctx.conn.lock().unwrap()
+        .query_row("select id, repo_id from remotes where remote_path=?1;", [&remote_path], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
+        .expect("can query");
+
+    let (job_id, state): (u64, u8) = ctx.conn.lock().unwrap()
+        .query_row("select id, state from jobs where commit_id=?1;", [commit_id], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
+        .expect("can query");
+
+    let state: sql::JobState = unsafe { std::mem::transmute(state) };
+
+    let repo_name: String = ctx.conn.lock().unwrap()
+        .query_row("select repo_name from repos where id=?1;", [repo_id], |row| row.get(0))
+        .expect("can query");
+
+    let deployed = false;
+
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("now is before epoch");
 
-    format!("requested: {:?}", path)
+    let resp = format!("\
+        <html>\n\
+          <head>\n\
+            <title>ci.butactuallyin.space - {}</title>\n\
+          </head>\n\
+          <body>\n\
+            <pre>\n\
+            repo: {}\n\
+            commit: <a href='https://www.github.com/{}/commit/{}'>{}</a>\n  \
+            status: {}\n  \
+            deployed: {}\n\
+            </pre>\n\
+          </body>\n\
+        </html>\n",
+        repo_name,
+        repo_name,
+        &remote_path, &sha, &sha,
+        match state {
+            JobState::Pending | JobState::Started => {
+                "<span style='color:#660;'>pending</span>"
+            },
+            JobState::Complete => {
+                "<span style='color:green;'>pass</span>"
+            },
+            JobState::Error => {
+                "<span style='color:red;'>pass</span>"
+            }
+            JobState::Invalid => {
+                "<span style='color:red;'>(server error)</span>"
+            }
+        },
+        deployed,
+    );
+
+    (StatusCode::OK, Html(resp))
 }
 
 async fn handle_repo_event(Path(path): Path<(String, String)>, headers: HeaderMap, State(ctx): State<Arc<DbCtx>>, body: Bytes) -> impl IntoResponse {
@@ -161,17 +242,24 @@ async fn handle_repo_event(Path(path): Path<(String, String)>, headers: HeaderMa
         }
     };
 
-    let mut mac = Hmac::<Sha256>::new_from_slice(GITHUB_PSK)
-        .expect("hmac can be constructed");
-    mac.update(&body);
-    let result = mac.finalize().into_bytes().to_vec();
+    let mut hmac_ok = false;
 
-    // hack: skip sha256=
-    let decoded = hex::decode(&sent_hmac[7..]).expect("provided hmac is valid hex");
-    if decoded != result {
-        eprintln!("bad hmac:\n\
-           got:      {:?}\n\
-           expected: {:?}", decoded, result);
+    for psk in PSKS.iter() {
+        let mut mac = Hmac::<Sha256>::new_from_slice(psk)
+            .expect("hmac can be constructed");
+        mac.update(&body);
+        let result = mac.finalize().into_bytes().to_vec();
+
+        // hack: skip sha256=
+        let decoded = hex::decode(&sent_hmac[7..]).expect("provided hmac is valid hex");
+        if decoded == result {
+            hmac_ok = true;
+            break;
+        }
+    }
+
+    if !hmac_ok {
+        eprintln!("bad hmac by all psks");
         return (StatusCode::BAD_REQUEST, "").into_response();
     }
 
@@ -186,213 +274,8 @@ async fn handle_repo_event(Path(path): Path<(String, String)>, headers: HeaderMa
     handle_github_event(ctx, path.0, path.1, kind, payload).await
 }
 
-struct DbCtx {
-    conn: Mutex<Connection>,
-}
 
-struct RemoteNotifier {
-    remote_path: String,
-    notifier: NotifierConfig,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(untagged)]
-enum NotifierConfig {
-    GitHub {
-        token: String,
-    },
-    Email {
-        username: String,
-        password: String,
-        mailserver: String,
-        from: String,
-        to: String,
-    }
-}
-
-impl NotifierConfig {
-    fn github_from_file(path: &str) -> Result<Self, String> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| format!("can't read notifier config at {}: {:?}", path, e))?;
-        let config = serde_json::from_slice(&bytes)
-            .map_err(|e| format!("can't deserialize notifier config at {}: {:?}", path, e))?;
-
-        if matches!(config, NotifierConfig::GitHub { .. }) {
-            Ok(config)
-        } else {
-            Err(format!("config at {} doesn't look like a github config (but was otherwise valid?)", path))
-        }
-    }
-
-    fn email_from_file(path: &str) -> Result<Self, String> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| format!("can't read notifier config at {}: {:?}", path, e))?;
-        let config = serde_json::from_slice(&bytes)
-            .map_err(|e| format!("can't deserialize notifier config at {}: {:?}", path, e))?;
-
-        if matches!(config, NotifierConfig::Email { .. }) {
-            Ok(config)
-        } else {
-            Err(format!("config at {} doesn't look like an email config (but was otherwise valid?)", path))
-        }
-    }
-}
-
-impl RemoteNotifier {
-    async fn tell_pending_job(&self, ctx: &Arc<DbCtx>, repo_id: u64, sha: &str, job_id: u64) -> Result<(), String> {
-        match &self.notifier {
-            NotifierConfig::GitHub { token } => {
-                let status_info = serde_json::json!({
-                    "state": "pending",
-                    "target_url": format!(
-                        "https://{}/{}/{}",
-                        "ci.butactuallyin.space",
-                        &self.remote_path,
-                        sha,
-                    ),
-                    "description": "build is queued",
-                    "context": "actuallyinspace runner",
-                });
-
-                // TODO: should pool (probably in ctx?) to have an upper bound in concurrent
-                // connections.
-                let client = reqwest::Client::new();
-                let res = client.post(&format!("https://api.github.com/repos/{}/statuses/{}", &self.remote_path, sha))
-                    .body(serde_json::to_string(&status_info).expect("can stringify json"))
-                    .header("authorization", format!("Bearer {}", token))
-                    .header("accept", "application/vnd.github+json")
-                    .send()
-                    .await;
-
-                match res {
-                    Ok(res) => {
-                        if res.status() == StatusCode::OK {
-                            Ok(())
-                        } else {
-                            Err(format!("bad response: {}, response data: {:?}", res.status().as_u16(), res))
-                        }
-                    }
-                    Err(e) => {
-                        Err(format!("failure sending request: {:?}", e))
-                    }
-                }
-            }
-            NotifierConfig::Email { username, password, mailserver, from, to } => {
-                panic!("should send an email saying that a job is now pending for `sha`")
-            }
-        }
-    }
-}
-
-impl DbCtx {
-    fn new(db_path: &'static str) -> Self {
-        DbCtx {
-            conn: Mutex::new(Connection::open(db_path).unwrap())
-        }
-    }
-
-    fn new_commit(&self, sha: &str) -> Result<u64, String> {
-        let conn = self.conn.lock().unwrap();
-        conn
-            .execute(
-                "insert into commits (sha) values (?1)",
-                [sha.clone()]
-            )
-            .expect("can insert");
-
-        Ok(conn.last_insert_rowid() as u64)
-    }
-
-    fn new_job(&self, remote_id: u64, sha: &str) -> Result<u64, String> {
-        // TODO: potential race: if two remotes learn about a commit at the same time and we decide
-        // to create two jobs at the same time, this might return an incorrect id if the insert
-        // didn't actually insert a new row.
-        let commit_id = self.new_commit(sha).expect("can create commit record");
-
-        let created_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("now is before epoch")
-            .as_millis() as u64;
-
-        let conn = self.conn.lock().unwrap();
-
-        let rows_modified = conn.execute(
-            "insert into jobs (state, remote_id, commit_id, created_time) values (?1, ?2, ?3, ?4);",
-            (sql::JobState::Pending as u64, remote_id, commit_id, created_time)
-        ).unwrap();
-
-        assert_eq!(1, rows_modified);
-
-        Ok(conn.last_insert_rowid() as u64)
-    }
-
-    fn notifiers_by_name(&self, repo: &str) -> Result<Vec<RemoteNotifier>, String> {
-        let maybe_repo_id: Option<u64> = self.conn.lock()
-            .unwrap()
-            .query_row("select * from repos where repo_name=?1", [repo], |row| row.get(0))
-            .optional()
-            .expect("query succeeds");
-        match maybe_repo_id {
-            Some(repo_id) => {
-                // get remotes
-                
-                #[derive(Debug)]
-                #[allow(dead_code)]
-                struct Remote {
-                    id: u64,
-                    repo_id: u64,
-                    remote_path: String,
-                    remote_api: String,
-                    notifier_config_path: String,
-                }
-
-                let mut remotes: Vec<Remote> = Vec::new();
-
-                let conn = self.conn.lock().unwrap();
-                let mut remotes_query = conn.prepare(sql::REMOTES_FOR_REPO).unwrap();
-                let mut remote_results = remotes_query.query([repo_id]).unwrap();
-
-                while let Some(row) = remote_results.next().unwrap() {
-                    let (id, repo_id, remote_path, remote_api, notifier_config_path) = row.try_into().unwrap();
-                    remotes.push(Remote { id, repo_id, remote_path, remote_api, notifier_config_path });
-                }
-
-                let mut notifiers: Vec<RemoteNotifier> = Vec::new();
-
-                for remote in remotes.into_iter() {
-                    match remote.remote_api.as_str() {
-                        "github" => {
-                            let notifier = RemoteNotifier {
-                                remote_path: remote.remote_path,
-                                notifier: NotifierConfig::github_from_file(&remote.notifier_config_path)
-                                    .expect("can load notifier config")
-                            };
-                            notifiers.push(notifier);
-                        },
-                        "email" => {
-                            let notifier = RemoteNotifier {
-                                remote_path: remote.remote_path,
-                                notifier: NotifierConfig::email_from_file(&remote.notifier_config_path)
-                                    .expect("can load notifier config")
-                            };
-                            notifiers.push(notifier);
-                        }
-                        other => {
-                            eprintln!("unknown remote api kind: {:?}, remote is {:?}", other, &remote)
-                        }
-                    }
-                }
-
-                Ok(notifiers)
-            }
-            None => {
-                return Err(format!("repo '{}' is not known", repo));
-            }
-        }
-    }
-}
-
-async fn make_app_server(db_path: &'static str) -> Router {
+async fn make_app_server(cfg_path: &'static str, db_path: &'static str) -> Router {
     /*
 
     // GET /hello/warp => 200 OK with body "Hello, warp!"
@@ -457,7 +340,7 @@ async fn make_app_server(db_path: &'static str) -> Router {
         .route("/:owner/:repo/:sha", get(handle_commit_status))
         .route("/:owner/:repo", post(handle_repo_event))
         .fallback(fallback_get)
-        .with_state(Arc::new(DbCtx::new(db_path)))
+        .with_state(Arc::new(DbCtx::new(cfg_path, db_path)))
 }
 
 #[tokio::main]
@@ -468,9 +351,9 @@ async fn main() {
         PathBuf::from("/etc/letsencrypt/live/ci.butactuallyin.space/privkey.pem"),
     ).await.unwrap();
     spawn(axum_server::bind_rustls("127.0.0.1:8080".parse().unwrap(), config.clone())
-        .serve(make_app_server("/root/ixi_ci_server/state.db").await.into_make_service()));
+        .serve(make_app_server("/root/ixi_ci_server/config", "/root/ixi_ci_server/state.db").await.into_make_service()));
     axum_server::bind_rustls("0.0.0.0:443".parse().unwrap(), config)
-        .serve(make_app_server("/root/ixi_ci_server/state.db").await.into_make_service())
+        .serve(make_app_server("/root/ixi_ci_server/config", "/root/ixi_ci_server/state.db").await.into_make_service())
         .await
         .unwrap();
 }

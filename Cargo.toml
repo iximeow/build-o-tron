@@ -16,6 +16,9 @@ serde_derive = "*"
 serde_json = "*"
 rand = "*"
 tokio = { version = "*", features = ["full"] }
+tokio-stream = "*"
+hyper = "*"
+futures-util = "*"
 tracing = "*"
 tracing-subscriber = "*"
 http-body = "*"
@@ -25,6 +28,8 @@ hmac = "*"
 hex = "*"
 sha2 = "*"
 reqwest = { version = "*", features = ["rustls-tls-native-roots"] }
+clap = { version = "*", features = ["derive"] }
+rlua = "*"
 
 [[bin]]
 name = "ci_webserver"
@@ -33,3 +38,11 @@ path = "src/main.rs"
 [[bin]]
 name = "ci_driver"
 path = "src/ci_driver.rs"
+
+[[bin]]
+name = "ci_ctl"
+path = "src/ci_ctl.rs"
+
+[[bin]]
+name = "ci_runner"
+path = "src/ci_runner.rs"

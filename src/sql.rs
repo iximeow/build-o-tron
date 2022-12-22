@@ -1,10 +1,29 @@
 #![allow(dead_code)]
 
+use std::convert::TryFrom;
+
+#[derive(Debug, Clone)]
 pub enum JobState {
     Pending = 0,
     Started = 1,
     Complete = 2,
     Error = 3,
+    Invalid = 4,
+}
+
+impl TryFrom<u8> for JobState {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, String> {
+        match value {
+            0 => Ok(JobState::Pending),
+            1 => Ok(JobState::Started),
+            2 => Ok(JobState::Complete),
+            3 => Ok(JobState::Error),
+            4 => Ok(JobState::Invalid),
+            other => Err(format!("invalid job state: {}", other)),
+        }
+    }
 }
 
 // remote_id is the remote from which we were notified. this is necessary so we know which remote
@@ -14,6 +33,7 @@ pub const CREATE_JOBS_TABLE: &'static str = "\
         artifacts_path TEXT,
         state INTEGER NOT NULL,
         run_host TEXT,
+        build_token TEXT,
         remote_id INTEGER,
         commit_id INTEGER,
         created_time INTEGER,
@@ -44,6 +64,9 @@ pub const CREATE_REMOTES_TABLE: &'static str = "\
 
 pub const CREATE_REMOTES_INDEX: &'static str = "\
     CREATE INDEX IF NOT EXISTS 'repo_to_remote' ON remotes(repo_id);";
+
+pub const CREATE_REPO_NAME_INDEX: &'static str = "\
+    CREATE UNIQUE INDEX IF NOT EXISTS 'repo_names' ON repos(repo_name);";
 
 pub const PENDING_JOBS: &'static str = "\
     select * from jobs where state=0;";

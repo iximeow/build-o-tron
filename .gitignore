@@ -1,4 +1,6 @@
 /target
 /jobs
+/config
 state.db
 *.swp
+auth_secret
