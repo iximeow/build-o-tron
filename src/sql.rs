@@ -38,7 +38,8 @@ pub const CREATE_JOBS_TABLE: &'static str = "\
         commit_id INTEGER,
         created_time INTEGER,
         started_time INTEGER,
-        complete_time INTEGER);";
+        complete_time INTEGER,
+        job_timeout INTEGER);";
 
 pub const CREATE_COMMITS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS commits (id INTEGER PRIMARY KEY AUTOINCREMENT, sha TEXT UNIQUE);";
@@ -61,6 +62,12 @@ pub const CREATE_REMOTES_TABLE: &'static str = "\
         remote_url TEXT,
         remote_git_url TEXT,
         notifier_config_path TEXT);";
+
+pub const CREATE_ARTIFACTS_TABLE: &'static str = "\
+    CREATE TABLE IF NOT EXISTS artifacts (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id INTEGER,
+        name TEXT,
+        desc TEXT);";
 
 pub const CREATE_REMOTES_INDEX: &'static str = "\
     CREATE INDEX IF NOT EXISTS 'repo_to_remote' ON remotes(repo_id);";

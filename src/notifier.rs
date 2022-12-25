@@ -1,6 +1,11 @@
 use serde_derive::{Deserialize, Serialize};
 use std::sync::Arc;
 use axum::http::StatusCode;
+use lettre::transport::smtp::authentication::{Credentials, Mechanism};
+use lettre::{Message, Transport};
+use lettre::transport::smtp::extension::ClientId;
+use lettre::transport::smtp::client::{SmtpConnection, TlsParametersBuilder};
+use std::time::Duration;
 
 use crate::DbCtx;
 

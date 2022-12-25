@@ -19,6 +19,8 @@ tokio = { version = "*", features = ["full"] }
 tokio-stream = "*"
 hyper = "*"
 futures-util = "*"
+axum-macros = "*"
+lettre = "*"
 tracing = "*"
 tracing-subscriber = "*"
 http-body = "*"
