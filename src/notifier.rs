@@ -127,7 +127,54 @@ impl RemoteNotifier {
                 }
             }
             NotifierConfig::Email { username, password, mailserver, from, to } => {
-                panic!("should send an email saying that a job is now pending for `sha`")
+                eprintln!("[.] emailing {} for job {} via {}", state, &self.remote_path, mailserver);
+
+                let subject = format!("{}: job for {}", state, &self.remote_path);
+
+                let body = format!("{}", subject);
+
+                // TODO: when ci.butactuallyin.space has valid certs again, ... fix this.
+                let tls = TlsParametersBuilder::new(mailserver.to_string())
+                    .dangerous_accept_invalid_certs(true)
+                    .build()
+                    .unwrap();
+
+                let mut mailer = SmtpConnection::connect(
+                    mailserver,
+                    Some(Duration::from_millis(5000)),
+                    &ClientId::Domain("ci.butactuallyin.space".to_string()),
+                    None,
+                    None,
+                ).unwrap();
+
+                mailer.starttls(
+                    &tls,
+                    &ClientId::Domain("ci.butactuallyin.space".to_string()),
+                ).unwrap();
+
+                let resp = mailer.auth(
+                    &[Mechanism::Plain, Mechanism::Login],
+                    &Credentials::new(username.to_owned(), password.to_owned())
+                ).unwrap();
+                assert!(resp.is_positive());
+
+                let email = Message::builder()
+                    .from(from.parse().unwrap())
+                    .to(to.parse().unwrap())
+                    .subject(&subject)
+                    .body(body)
+                    .unwrap();
+
+                match mailer.send(email.envelope(), &email.formatted()) {
+                    Ok(_) => {
+                        eprintln!("[+] notified {}@{}", username, mailserver);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        eprintln!("[-] could not send email: {:?}", e);
+                        Err(e.to_string())
+                    }
+                }
             }
         }
     }
