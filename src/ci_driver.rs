@@ -46,6 +46,7 @@ fn reserve_artifacts_dir(job: u64) -> std::io::Result<PathBuf> {
 }
 
 async fn activate_job(dbctx: Arc<DbCtx>, job: &PendingJob, clients: &mut mpsc::Receiver<RunnerClient>) -> Result<(), String> {
+    eprintln!("activating job {:?}", job);
     let connection = dbctx.conn.lock().unwrap();
     let (repo_id, remote_git_url): (u64, String) = connection
         .query_row("select repo_id, remote_git_url from remotes where id=?1", [job.remote_id], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
@@ -323,6 +324,7 @@ impl fmt::Debug for RunnerClient {
 
 #[axum_macros::debug_handler]
 async fn handle_artifact(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClient>)>, headers: HeaderMap, artifact_content: BodyStream) -> impl IntoResponse {
+    eprintln!("artifact request");
     let job_token = match headers.get("x-job-token") {
         Some(job_token) => job_token.to_str().expect("valid string"),
         None => {
