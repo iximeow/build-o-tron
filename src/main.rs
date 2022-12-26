@@ -43,7 +43,7 @@ enum GithubHookError {
 
 #[derive(Debug)]
 enum GithubEvent {
-    Push { tip: String, repo_name: String, head_commit: serde_json::Map<String, serde_json::Value> },
+    Push { tip: String, repo_name: String, head_commit: serde_json::Map<String, serde_json::Value>, pusher: serde_json::Map<String, serde_json::Value> },
     Other {}
 }
 
@@ -73,17 +73,23 @@ fn parse_push_event(body: serde_json::Value) -> Result<GithubEvent, GithubHookEr
         .ok_or(GithubHookError::BadType { path: "head_commit", expected: "obj" })?
         .to_owned();
 
-    Ok(GithubEvent::Push { tip, repo_name, head_commit })
+    let pusher = body.get("pusher")
+        .ok_or(GithubHookError::MissingElement { path: "pusher" })?
+        .as_object()
+        .ok_or(GithubHookError::BadType { path: "pusher", expected: "obj" })?
+        .to_owned();
+
+    Ok(GithubEvent::Push { tip, repo_name, head_commit, pusher })
 }
 
 async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event: GithubEvent) -> impl IntoResponse {
-    let (sha, repo, head_commit) = if let GithubEvent::Push { tip, repo_name, head_commit } = event {
-        (tip, repo_name, head_commit)
+    let (sha, repo, head_commit, pusher) = if let GithubEvent::Push { tip, repo_name, head_commit, pusher } = event {
+        (tip, repo_name, head_commit, pusher)
     } else {
         panic!("process push event on non-push event");
     };
 
-    println!("handling push event to {}/{}: sha {} in repo {}, {:?}", owner, repo, sha, repo, head_commit);
+    println!("handling push event to {}/{}: sha {} in repo {}, {:?}\n  pusher: {:?}", owner, repo, sha, repo, head_commit, pusher);
 
     // push event is in terms of a ref, but we don't know if it's a new commit (yet).
     // in terms of CI jobs, we care mainly about new commits.
@@ -115,7 +121,13 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
         }
     };
 
-    let job_id = ctx.new_job(remote_id, &sha).unwrap();
+    let pusher_email = pusher
+        .get("email")
+        .expect("has email")
+        .as_str()
+        .expect("is str");
+
+    let job_id = ctx.new_job(remote_id, &sha, Some(pusher_email)).unwrap();
 
     let notifiers = ctx.notifiers_by_repo(repo_id).expect("can get notifiers");
 

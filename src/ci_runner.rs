@@ -5,6 +5,7 @@ use std::process::Stdio;
 use std::process::ExitStatus;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use serde_derive::{Deserialize, Serialize};
+use serde_json::json;
 use serde::{Deserialize, de::DeserializeOwned, Serialize};
 use std::task::{Context, Poll};
 use std::pin::Pin;
@@ -199,7 +200,7 @@ impl tokio::io::AsyncWrite for ArtifactStream {
 }
 
 impl RunnerClient {
-    async fn new(host: &str, sender: hyper::body::Sender, mut res: Response) -> Result<Self, String> {
+    async fn new(host: &str, mut sender: hyper::body::Sender, mut res: Response) -> Result<Self, String> {
         if res.status() != StatusCode::OK {
             return Err(format!("server returned a bad response: {:?}, response itself: {:?}", res.status(), res));
         }
@@ -222,7 +223,7 @@ impl RunnerClient {
         })
     }
 
-    async fn wait_for_work(&mut self) -> Result<Option<RequestedJob>, WorkAcquireError> {
+    async fn wait_for_work(&mut self, accepted_pushers: Option<&[String]>) -> Result<Option<RequestedJob>, WorkAcquireError> {
         match self.rx.chunk().await {
             Ok(Some(chunk)) => {
                 eprintln!("got chunk: {:?}", &chunk);
@@ -312,10 +313,16 @@ async fn main() {
         .build()
         .expect("can build client");
 
-    let allowed_pushers = None;
+    let allowed_pushers: Option<Vec<String>> = None;
 
     loop {
         let (mut sender, body) = hyper::Body::channel();
+
+        sender.send_data(serde_json::to_string(&json!({
+            "kind": "new_job_please",
+            "accepted_pushers": &["git@iximeow.net", "me@iximeow.net"],
+        })).unwrap().into()).await.expect("req");
+
         let poll = client.post("https://ci.butactuallyin.space:9876/api/next_job")
             .header("user-agent", "ci-butactuallyin-space-runner")
             .header("authorization", &secret)
@@ -333,7 +340,7 @@ async fn main() {
                         continue;
                     }
                 };
-                let job = match client.wait_for_work().await {
+                let job = match client.wait_for_work(allowed_pushers.as_ref().map(|x| x.as_ref())).await {
                     Ok(Some(request)) => request,
                     Ok(None) => {
                         eprintln!("no work to do (yet)");

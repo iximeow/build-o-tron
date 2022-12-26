@@ -39,7 +39,8 @@ pub const CREATE_JOBS_TABLE: &'static str = "\
         created_time INTEGER,
         started_time INTEGER,
         complete_time INTEGER,
-        job_timeout INTEGER);";
+        job_timeout INTEGER,
+        source TEXT);";
 
 pub const CREATE_COMMITS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS commits (id INTEGER PRIMARY KEY AUTOINCREMENT, sha TEXT UNIQUE);";
@@ -76,7 +77,7 @@ pub const CREATE_REPO_NAME_INDEX: &'static str = "\
     CREATE UNIQUE INDEX IF NOT EXISTS 'repo_names' ON repos(repo_name);";
 
 pub const PENDING_JOBS: &'static str = "\
-    select * from jobs where state=0;";
+    select id, artifacts_path, state, run_host, remote_id, commit_id, created_time, source from jobs where state=0;";
 
 pub const COMMIT_TO_ID: &'static str = "\
     select id from commits where sha=?1;";

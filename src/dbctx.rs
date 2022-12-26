@@ -25,6 +25,7 @@ pub struct PendingJob {
     pub remote_id: u64,
     pub commit_id: u64,
     pub created_time: u64,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,7 +220,7 @@ impl DbCtx {
         Ok(conn.last_insert_rowid() as u64)
     }
 
-    pub fn new_job(&self, remote_id: u64, sha: &str) -> Result<u64, String> {
+    pub fn new_job(&self, remote_id: u64, sha: &str, pusher: Option<&str>) -> Result<u64, String> {
         // TODO: potential race: if two remotes learn about a commit at the same time and we decide
         // to create two jobs at the same time, this might return an incorrect id if the insert
         // didn't actually insert a new row.
@@ -233,8 +234,8 @@ impl DbCtx {
         let conn = self.conn.lock().unwrap();
 
         let rows_modified = conn.execute(
-            "insert into jobs (state, remote_id, commit_id, created_time) values (?1, ?2, ?3, ?4);",
-            (crate::sql::JobState::Pending as u64, remote_id, commit_id, created_time)
+            "insert into jobs (state, remote_id, commit_id, created_time, source) values (?1, ?2, ?3, ?4, ?5);",
+            (crate::sql::JobState::Pending as u64, remote_id, commit_id, created_time, pusher)
         ).unwrap();
 
         assert_eq!(1, rows_modified);
@@ -250,12 +251,13 @@ impl DbCtx {
         let mut pending = Vec::new();
 
         while let Some(row) = jobs.next().unwrap() {
-            let (id, artifacts, state, run_host, remote_id, commit_id, created_time) = row.try_into().unwrap();
+            let (id, artifacts, state, run_host, remote_id, commit_id, created_time, source) = row.try_into().unwrap();
             let state: u8 = state;
             pending.push(PendingJob {
                 id, artifacts,
                 state: state.try_into().unwrap(),
-                run_host, remote_id, commit_id, created_time
+                run_host, remote_id, commit_id, created_time,
+                source,
             });
         }
 
