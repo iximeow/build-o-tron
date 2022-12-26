@@ -36,7 +36,6 @@ struct RequestedJob {
 impl RequestedJob {
     // TODO: panics if hyper finds the channel is closed. hum
     async fn create_artifact(&self, client: &mut RunnerClient, name: &str, desc: &str) -> Result<ArtifactStream, String> {
-        eprintln!("[?] creating artifact...");
         let (mut sender, body) = hyper::Body::channel();
         let resp = client.http.post("https://ci.butactuallyin.space:9876/api/artifact")
             .header("user-agent", "ci-butactuallyin-space-runner")
