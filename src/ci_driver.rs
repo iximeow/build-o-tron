@@ -31,8 +31,18 @@ use crate::sql::JobState;
 fn reserve_artifacts_dir(job: u64) -> std::io::Result<PathBuf> {
     let mut path: PathBuf = "/root/ixi_ci_server/jobs/".into();
     path.push(job.to_string());
-    std::fs::create_dir(&path)?;
-    Ok(path)
+    match std::fs::create_dir(&path) {
+        Ok(()) => {
+            Ok(path)
+        },
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                Ok(path)
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 async fn activate_job(dbctx: Arc<DbCtx>, job: &PendingJob, clients: &mut mpsc::Receiver<RunnerClient>) -> Result<(), String> {
@@ -53,12 +63,11 @@ async fn activate_job(dbctx: Arc<DbCtx>, job: &PendingJob, clients: &mut mpsc::R
         .query_row("select sha from commits where id=?1", [job.commit_id], |row| row.get(0))
         .expect("can run query");
 
-    let artifacts = PathBuf::from("/tmp");
-    /*
     let artifacts: PathBuf = match &job.artifacts {
         Some(artifacts) => PathBuf::from(artifacts),
         None => reserve_artifacts_dir(job.id).expect("can reserve a directory for artifacts")
     };
+    /*
 
     if job.run_host.as_ref() == None {
         eprintln!("need to find a host to run the job");
