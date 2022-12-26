@@ -6,6 +6,7 @@ use lettre::{Message, Transport};
 use lettre::transport::smtp::extension::ClientId;
 use lettre::transport::smtp::client::{SmtpConnection, TlsParametersBuilder};
 use std::time::Duration;
+use std::path::Path;
 
 use crate::DbCtx;
 
@@ -30,29 +31,31 @@ pub enum NotifierConfig {
 }
 
 impl NotifierConfig {
-    pub fn github_from_file(path: &str) -> Result<Self, String> {
+    pub fn github_from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        let path = path.as_ref();
         let bytes = std::fs::read(path)
-            .map_err(|e| format!("can't read notifier config at {}: {:?}", path, e))?;
+            .map_err(|e| format!("can't read notifier config at {}: {:?}", path.display(), e))?;
         let config = serde_json::from_slice(&bytes)
-            .map_err(|e| format!("can't deserialize notifier config at {}: {:?}", path, e))?;
+            .map_err(|e| format!("can't deserialize notifier config at {}: {:?}", path.display(), e))?;
 
         if matches!(config, NotifierConfig::GitHub { .. }) {
             Ok(config)
         } else {
-            Err(format!("config at {} doesn't look like a github config (but was otherwise valid?)", path))
+            Err(format!("config at {} doesn't look like a github config (but was otherwise valid?)", path.display()))
         }
     }
 
-    pub fn email_from_file(path: &str) -> Result<Self, String> {
+    pub fn email_from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        let path = path.as_ref();
         let bytes = std::fs::read(path)
-            .map_err(|e| format!("can't read notifier config at {}: {:?}", path, e))?;
+            .map_err(|e| format!("can't read notifier config at {}: {:?}", path.display(), e))?;
         let config = serde_json::from_slice(&bytes)
-            .map_err(|e| format!("can't deserialize notifier config at {}: {:?}", path, e))?;
+            .map_err(|e| format!("can't deserialize notifier config at {}: {:?}", path.display(), e))?;
 
         if matches!(config, NotifierConfig::Email { .. }) {
             Ok(config)
         } else {
-            Err(format!("config at {} doesn't look like an email config (but was otherwise valid?)", path))
+            Err(format!("config at {} doesn't look like an email config (but was otherwise valid?)", path.display()))
         }
     }
 }

@@ -4,6 +4,8 @@ use rusqlite::{Connection, OptionalExtension};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::path::Path;
+use std::path::PathBuf;
 
 use crate::notifier::{RemoteNotifier, NotifierConfig};
 use crate::sql;
@@ -11,7 +13,7 @@ use crate::sql;
 const TOKEN_EXPIRY_MS: u64 = 1000 * 60 * 30;
 
 pub struct DbCtx {
-    pub config_path: String,
+    pub config_path: PathBuf,
     // don't love this but.. for now...
     pub conn: Mutex<Connection>,
 }
@@ -84,9 +86,9 @@ impl ArtifactDescriptor {
 }
 
 impl DbCtx {
-    pub fn new(config_path: &str, db_path: &str) -> Self {
+    pub fn new<P: AsRef<Path>>(config_path: P, db_path: P) -> Self {
         DbCtx {
-            config_path: config_path.to_owned(),
+            config_path: config_path.as_ref().to_owned(),
             conn: Mutex::new(Connection::open(db_path).unwrap())
         }
     }
@@ -293,17 +295,23 @@ impl DbCtx {
         for remote in remotes.into_iter() {
             match remote.remote_api.as_str() {
                 "github" => {
+                    let mut notifier_path = self.config_path.clone();
+                    notifier_path.push(&remote.notifier_config_path);
+
                     let notifier = RemoteNotifier {
                         remote_path: remote.remote_path,
-                        notifier: NotifierConfig::github_from_file(&format!("{}/{}", self.config_path, remote.notifier_config_path))
+                        notifier: NotifierConfig::github_from_file(&notifier_path)
                             .expect("can load notifier config")
                     };
                     notifiers.push(notifier);
                 },
                 "email" => {
+                    let mut notifier_path = self.config_path.clone();
+                    notifier_path.push(&remote.notifier_config_path);
+
                     let notifier = RemoteNotifier {
                         remote_path: remote.remote_path,
-                        notifier: NotifierConfig::email_from_file(&format!("{}/{}", self.config_path, remote.notifier_config_path))
+                        notifier: NotifierConfig::email_from_file(&notifier_path)
                             .expect("can load notifier config")
                     };
                     notifiers.push(notifier);

@@ -437,18 +437,33 @@ async fn make_api_server(dbctx: Arc<DbCtx>) -> (Router, mpsc::Receiver<RunnerCli
     (router, pending_client_receiver)
 }
 
+#[derive(Deserialize, Serialize)]
+struct DriverConfig {
+    cert_path: PathBuf,
+    key_path: PathBuf,
+    config_path: PathBuf,
+    db_path: PathBuf,
+    server_addr: String,
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
+
+    let mut args = std::env::args();
+    args.next().expect("first arg exists");
+    let config_path = args.next().unwrap_or("./driver_config.json".to_string());
+    let driver_config: DriverConfig = serde_json::from_reader(std::fs::File::open(config_path).expect("file exists and is accessible")).expect("valid json for DriverConfig");
+
     let config = RustlsConfig::from_pem_file(
-        PathBuf::from("/etc/letsencrypt/live/ci.butactuallyin.space/fullchain.pem"),
-        PathBuf::from("/etc/letsencrypt/live/ci.butactuallyin.space/privkey.pem"),
+        driver_config.cert_path.clone(),
+        driver_config.key_path.clone(),
     ).await.unwrap();
 
-    let dbctx = Arc::new(DbCtx::new("/root/ixi_ci_server/config", "/root/ixi_ci_server/state.db"));
+    let dbctx = Arc::new(DbCtx::new(&driver_config.config_path, &driver_config.db_path));
 
     let (api_server, mut channel) = make_api_server(Arc::clone(&dbctx)).await;
-    spawn(axum_server::bind_rustls("0.0.0.0:9876".parse().unwrap(), config)
+    spawn(axum_server::bind_rustls(driver_config.server_addr.parse().unwrap(), config)
           .serve(api_server.into_make_service()));
 
     dbctx.create_tables().unwrap();
