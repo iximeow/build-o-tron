@@ -705,6 +705,7 @@ dependencies = [
  "axum",
  "axum-macros",
  "axum-server",
+ "base64",
  "clap",
  "futures-util",
  "handlebars",

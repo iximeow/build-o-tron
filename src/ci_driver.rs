@@ -1,4 +1,6 @@
 use std::process::Command;
+use std::io::Read;
+use serde_derive::{Deserialize, Serialize};
 use futures_util::StreamExt;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -126,7 +128,13 @@ fn random_name() -> String {
 }
 
 fn token_for_job() -> String {
-    "very secret token do not share".to_string()
+    let mut data = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .unwrap()
+        .read_exact(&mut data)
+        .unwrap();
+
+    base64::encode(data)
 }
 
 struct ClientJob {
