@@ -151,6 +151,10 @@ async fn handle_github_event(ctx: Arc<DbCtx>, owner: String, repo: String, event
             let res = process_push_event(ctx, owner, repo, push_event).await;
             "ok".into_response()
         },
+        "status" => {
+            eprintln!("[.] status update");
+            "ok".into_response()
+        }
         other => {
             eprintln!("unhandled event kind: {}, repo {}/{}. content: {:?}", other, owner, repo, body);
             "".into_response()
