@@ -168,10 +168,14 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     let remote_path = format!("{}/{}", path.0, path.1);
     let sha = path.2;
 
-    let commit_id: Option<u64> = ctx.conn.lock().unwrap()
-        .query_row("select id from commits where sha=?1;", [&sha], |row| row.get(0))
-        .optional()
-        .expect("can query");
+    let commit_id: Option<u64> = if sha.len() >= 7 {
+        ctx.conn.lock().unwrap()
+            .query_row("select id from commits where sha like ?1;", [&format!("{}%", sha)], |row| row.get(0))
+            .optional()
+            .expect("can query")
+    } else {
+        None
+    };
 
     let commit_id: u64 = match commit_id {
         Some(commit_id) => {
@@ -186,8 +190,8 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         .query_row("select id, repo_id from remotes where remote_path=?1;", [&remote_path], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
         .expect("can query");
 
-    let (job_id, state): (u64, u8) = ctx.conn.lock().unwrap()
-        .query_row("select id, state from jobs where commit_id=?1;", [commit_id], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
+    let (job_id, state, build_result, result_desc): (u64, u8, Option<u8>, Option<String>) = ctx.conn.lock().unwrap()
+        .query_row("select id, state, build_result, final_status from jobs where commit_id=?1;", [commit_id], |row| Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2), row.get_unwrap(3))))
         .expect("can query");
 
     let state: sql::JobState = unsafe { std::mem::transmute(state) };
@@ -198,45 +202,74 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
 
     let deployed = false;
 
-    let time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("now is before epoch");
-
-    let resp = format!("\
-        <html>\n\
-          <head>\n\
-            <title>ci.butactuallyin.space - {}</title>\n\
-          </head>\n\
-          <body>\n\
-            <pre>\n\
-            repo: {}\n\
-            commit: <a href='https://www.github.com/{}/commit/{}'>{}</a>\n  \
-            status: {}\n  \
-            deployed: {}\n\
-            </pre>\n\
-          </body>\n\
-        </html>\n",
-        repo_name,
-        repo_name,
-        &remote_path, &sha, &sha,
-        match state {
-            JobState::Pending | JobState::Started => {
-                "<span style='color:#660;'>pending</span>"
-            },
-            JobState::Complete => {
-                "<span style='color:green;'>pass</span>"
-            },
-            JobState::Error => {
-                "<span style='color:red;'>pass</span>"
-            }
-            JobState::Invalid => {
-                "<span style='color:red;'>(server error)</span>"
+    let head = format!("<head><title>ci.butactuallin.space - {}</title></head>", repo_name);
+    let remote_commit_elem = format!("<a href=\"https://www.github.com/{}/commit/{}\">{}</a>", &remote_path, &sha, &sha);
+    let status_elem = match state {
+        JobState::Pending | JobState::Started => {
+            "<span style='color:#660;'>pending</span>"
+        },
+        JobState::Finished => {
+            if let Some(build_result) = build_result {
+                if build_result == 0 {
+                    "<span style='color:green;'>pass</span>"
+                } else {
+                    "<span style='color:red;'>failed</span>"
+                }
+            } else {
+                eprintln!("job {} for commit {} is missing a build result but is reportedly finished (old data)?", job_id, commit_id);
+                "<span style='color:red;'>unreported</span>"
             }
         },
-        deployed,
-    );
+        JobState::Error => {
+            "<span style='color:red;'>error</span>"
+        }
+        JobState::Invalid => {
+            "<span style='color:red;'>(server error)</span>"
+        }
+    };
 
-    (StatusCode::OK, Html(resp))
+    let output = if state == JobState::Finished && build_result == Some(1) || state == JobState::Error {
+        // collect stderr/stdout from the last artifacts, then the last 10kb of each, insert it in
+        // the page...
+        let artifacts = ctx.artifacts_for_job(job_id).unwrap();
+        if artifacts.len() > 0 {
+            let mut streams = String::new();
+            for artifact in artifacts.iter() {
+                eprintln!("found artifact {:?} for job {:?}", artifact, job_id);
+                streams.push_str(&format!("<div>step: <pre style='display:inline;'>{}</pre></div>\n", &artifact.name));
+                streams.push_str("<pre>");
+                streams.push_str(&std::fs::read_to_string(format!("./jobs/{}/{}", artifact.job_id, artifact.id)).unwrap());
+                streams.push_str("</pre>");
+            }
+            Some(streams)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut html = String::new();
+    html.push_str("<html>\n");
+    html.push_str(&format!("  {}\n", head));
+    html.push_str("  <body>\n");
+    html.push_str("    <pre>\n");
+    html.push_str(&format!("repo: {}\n", repo_name));
+    html.push_str(&format!("commit: {}\n", remote_commit_elem));
+    html.push_str(&format!("status: {}\n", status_elem));
+    if let Some(desc) = result_desc {
+        html.push_str(&format!("  description: {}\n  ", desc));
+    }
+    html.push_str(&format!("deployed: {}\n", deployed));
+    html.push_str("    </pre>\n");
+    if let Some(output) = output {
+        html.push_str("    <div>last build output</div>\n");
+        html.push_str(&format!("    {}\n", output));
+    }
+    html.push_str("  </body>\n");
+    html.push_str("</html>");
+
+    (StatusCode::OK, Html(html))
 }
 
 async fn handle_repo_event(Path(path): Path<(String, String)>, headers: HeaderMap, State(ctx): State<Arc<DbCtx>>, body: Bytes) -> impl IntoResponse {
