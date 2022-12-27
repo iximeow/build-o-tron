@@ -47,6 +47,9 @@ enum JobAction {
     List,
     Rerun {
         which: u32
+    },
+    RerunCommit {
+        commit: String
     }
 }
 
@@ -93,6 +96,17 @@ fn main() {
                         .expect("works");
                     eprintln!("[+] job {} set to pending", which);
                 }
+                JobAction::RerunCommit { commit } => {
+                    let db = DbCtx::new(&config_path, &db_path);
+                    let job_id = db.job_for_commit(&commit).unwrap();
+                    if let Some(job_id) = job_id {
+                        db.conn.lock().unwrap().execute("update jobs set state=0 where id=?1", [job_id])
+                            .expect("works");
+                        eprintln!("[+] job {} (commit {}) set to pending", job_id, commit);
+                    } else {
+                        eprintln!("[-] no job for commit {}", commit);
+                    }
+                }
             }
         },
         Command::Add { what } => {
@@ -131,7 +145,7 @@ fn main() {
                     };
                     println!("[+] new repo created: '{}' id {}", &name, repo_id);
                     if let Some((remote, remote_kind, config_path)) = remote_config {
-                        let full_config_file_path = format!("{}/{}", &db.config_path, config_path);
+                        let full_config_file_path = format!("{}/{}", &db.config_path.display(), config_path);
                         let config = match remote_kind.as_ref() {
                             "github" => {
                                 assert!(NotifierConfig::github_from_file(&full_config_file_path).is_ok());

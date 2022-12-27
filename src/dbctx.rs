@@ -150,6 +150,18 @@ impl DbCtx {
         ArtifactDescriptor::new(job_id, artifact_id).await
     }
 
+    pub fn job_for_commit(&self, sha: &str) -> Result<Option<u64>, String> {
+        self.conn.lock()
+            .unwrap()
+            .query_row(
+                "select id from commits where sha=?1",
+                [sha],
+                |row| { row.get(0) }
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
     pub fn job_for_token(&self, token: &str) -> Result<Option<(u64, Option<String>, TokenValidity)>, String> {
         self.conn.lock()
             .unwrap()
