@@ -37,6 +37,14 @@ pub enum TokenValidity {
     Valid,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactRecord {
+    pub id: u64,
+    pub job_id: u64,
+    pub name: String,
+    pub desc: String
+}
+
 pub struct ArtifactDescriptor {
     job_id: u64,
     artifact_id: u64,
@@ -255,6 +263,21 @@ impl DbCtx {
         assert_eq!(1, rows_modified);
 
         Ok(conn.last_insert_rowid() as u64)
+    }
+
+    pub fn artifacts_for_job(&self, job: u64) -> Result<Vec<ArtifactRecord>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut artifacts_query = conn.prepare(sql::LAST_ARTIFACTS_FOR_JOB).unwrap();
+        let mut result = artifacts_query.query([job]).unwrap();
+        let mut artifacts = Vec::new();
+
+        while let Some(row) = result.next().unwrap() {
+            let (id, job_id, name, desc): (u64, u64, String, String) = row.try_into().unwrap();
+            artifacts.push(ArtifactRecord { id, job_id, name, desc });
+        }
+
+        Ok(artifacts)
     }
 
     pub fn get_pending_jobs(&self) -> Result<Vec<PendingJob>, String> {

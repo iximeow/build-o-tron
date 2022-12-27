@@ -26,6 +26,7 @@ mod sql;
 mod notifier;
 
 use crate::dbctx::{DbCtx, PendingJob};
+use crate::sql::JobResult;
 use crate::sql::JobState;
 
 fn reserve_artifacts_dir(job: u64) -> std::io::Result<PathBuf> {
@@ -186,16 +187,22 @@ impl ClientJob {
                         eprintln!("job update: state is {} and result is {}", state, result);
                         match result {
                             "pass" => {
-                                (Ok("success".to_string()), JobState::Complete)
+                                (Ok("success".to_string()), JobState::Finished)
                             },
                             other => {
-                                (Err(other.to_string()), JobState::Error)
+                                let desc = msg.as_object().unwrap().get("desc")
+                                    .map(|x| x.as_str().unwrap().to_string())
+                                    .unwrap_or_else(|| other.to_string());
+                                (Err(desc), JobState::Error)
                             }
                         }
                     } else if state == "interrupted" {
                         let result = msg.as_object().unwrap().get("result").unwrap().as_str().unwrap();
                         eprintln!("job update: state is {} and result is {}", state, result);
-                        (Err(result.to_string()), JobState::Error)
+                        let desc = msg.as_object().unwrap().get("desc")
+                            .map(|x| x.as_str().unwrap().to_string())
+                            .unwrap_or_else(|| result.to_string());
+                        (Err(desc), JobState::Error)
                     } else {
                         eprintln!("job update: state is {}", state);
                         (Err(format!("atypical completion status: {}", state)), JobState::Invalid)
@@ -212,9 +219,19 @@ impl ClientJob {
                         .expect("now is before epoch")
                         .as_millis();
 
+                    let build_result = if result.is_ok() {
+                        JobResult::Pass
+                    } else {
+                        JobResult::Fail
+                    };
+                    let result_desc = match result {
+                        Ok(msg) => msg,
+                        Err(msg) => msg,
+                    };
+
                     self.dbctx.conn.lock().unwrap().execute(
-                        "update jobs set complete_time=?1, state=?2 where id=?3",
-                        (now as u64, state as u64, self.job.id)
+                        "update jobs set complete_time=?1, state=?2, build_result=?3, final_status=?4 where id=?5",
+                        (now as u64, state as u64, build_result as u8, result_desc, self.job.id)
                     )
                         .expect("can update");
                 }
@@ -227,7 +244,6 @@ impl ClientJob {
                 },
                 other => {
                     eprintln!("unhandled message kind {:?} ({:?})", msg_kind, msg);
-                    return;
                 }
             }
         }
