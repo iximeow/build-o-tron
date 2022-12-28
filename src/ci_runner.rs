@@ -291,14 +291,39 @@ impl RunningJob {
         }
     }
 
-    async fn run_command(&self, command: &[String]) -> Result<(), String> {
+    async fn run_command(&mut self, command: &[String], working_dir: Option<&str>) -> Result<(), String> {
+        self.client.send(serde_json::json!({
+            "kind": "command",
+            "state": "started",
+            "command": command,
+            "cwd": working_dir,
+            "id": 1,
+        })).await.unwrap();
+
         let mut cmd = Command::new(&command[0]);
+        let cwd = match working_dir {
+            Some(dir) => {
+                format!("tmpdir/{}", dir)
+            },
+            None => {
+                "tmpdir".to_string()
+            }
+        };
+        eprintln!("running {:?} in {}", &command, &cwd);
         let human_name = command.join(" ");
         cmd
-            .current_dir("tmpdir")
+            .current_dir(cwd)
             .args(&command[1..]);
 
         let cmd_res = self.execute_command(cmd, &format!("{} log", human_name), &human_name).await?;
+
+        self.client.send(serde_json::json!({
+            "kind": "command",
+            "state": "finished",
+            "exit_code": cmd_res.code(),
+            "id": 1,
+        })).await.unwrap();
+
 
         if !cmd_res.success() {
             return Err(format!("{} failed: {:?}", &human_name, cmd_res));

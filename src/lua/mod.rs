@@ -1,13 +1,9 @@
-use crate::RunnerClient;
 use crate::RunningJob;
 
 use rlua::prelude::*;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::process::Command;
-use std::process::ExitStatus;
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 
 pub const DEFAULT_RUST_GOODFILE: &'static [u8] = include_bytes!("../../config/goodfiles/rust.lua");
 
@@ -59,13 +55,67 @@ impl BuildEnv {
                     return Err(LuaError::RuntimeError(format!("argument 1 was not a table: {:?}", other)));
                 }
             };
+
+            #[derive(Debug)]
+            struct RunParams {
+                step: Option<String>,
+                name: Option<String>,
+                cwd: Option<String>,
+            }
+
+            let params = match params {
+                LuaValue::Table(table) => {
+                    let step = match table.get("step").expect("can get from table") {
+                        LuaValue::String(v) => {
+                            Some(v.to_str()?.to_owned())
+                        },
+                        LuaValue::Nil => {
+                            None
+                        },
+                        other => {
+                            return Err(LuaError::RuntimeError(format!("params[\"step\"] must be a string")));
+                        }
+                    };
+                    let name = match table.get("name").expect("can get from table") {
+                        LuaValue::String(v) => {
+                            Some(v.to_str()?.to_owned())
+                        },
+                        LuaValue::Nil => {
+                            None
+                        },
+                        other => {
+                            return Err(LuaError::RuntimeError(format!("params[\"name\"] must be a string")));
+                        }
+                    };
+                    let cwd = match table.get("cwd").expect("can get from table") {
+                        LuaValue::String(v) => {
+                            Some(v.to_str()?.to_owned())
+                        },
+                        LuaValue::Nil => {
+                            None
+                        },
+                        other => {
+                            return Err(LuaError::RuntimeError(format!("params[\"cwd\"] must be a string")));
+                        }
+                    };
+
+                    RunParams {
+                        step,
+                        name,
+                        cwd,
+                    }
+                },
+                other => {
+                    return Err(LuaError::RuntimeError(format!("argument 2 was not a table: {:?}", other)));
+                }
+            };
             eprintln!("args: {:?}", args);
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
             rt.block_on(async move {
-                job_ref.lock().unwrap().run_command(&args).await
+                job_ref.lock().unwrap().run_command(&args, params.cwd.as_ref().map(|x| x.as_str())).await
                     .map_err(|e| LuaError::RuntimeError(format!("run_command error: {:?}", e)))
             })
         })
@@ -86,17 +136,36 @@ impl BuildEnv {
             .map_err(|e| format!("problem defining metric function: {:?}", e))?;
 
         let job_ref = Arc::clone(&self.job);
-        let artifact = lua_ctx.create_function(move |_, (name, path): (String, String)| {
+        let artifact = lua_ctx.create_function(move |_, (path, name): (String, Option<String>)| {
+            let path: PathBuf = path.into();
+
+            let default_name: String = match (path.file_name(), path.parent()) {
+                (Some(name), _) => name
+                    .to_str()
+                    .ok_or(LuaError::RuntimeError("artifact name is not a unicode string".to_string()))?
+                    .to_string(),
+                (_, Some(parent)) => format!("{}", parent.display()),
+                (None, None) => {
+                    // one day using directories for artifacts might work but / is still not going
+                    // to be accepted
+                    return Err(LuaError::RuntimeError(format!("cannot infer a default path name for {}", path.display())));
+                }
+            };
+
+            let name: String = match name {
+                Some(name) => name,
+                None => default_name,
+            };
             let job_ref: Arc<Mutex<RunningJob>> = Arc::clone(&job_ref);
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
             rt.block_on(async move {
-                let artifact = job_ref.lock().unwrap().create_artifact(&name, &format!("{} (from {})", name, path)).await
+                let artifact = job_ref.lock().unwrap().create_artifact(&name, &format!("{} (from {})", name, path.display())).await
                     .map_err(|e| LuaError::RuntimeError(format!("create_artifact error: {:?}", e)))
                     .unwrap();
-                crate::forward_data(tokio::fs::File::open(path).await.unwrap(), artifact).await
+                crate::forward_data(tokio::fs::File::open(&format!("tmpdir/{}", path.display())).await.unwrap(), artifact).await
                     .map_err(|e| LuaError::RuntimeError(format!("failed uploading data for {}: {:?}", name, e)))
             })
         })
@@ -115,7 +184,7 @@ impl BuildEnv {
         }).unwrap();
 
         let size_of_file = lua_ctx.create_function(move |_, name: String| {
-            Ok(std::fs::metadata(&name)
+            Ok(std::fs::metadata(&format!("tmpdir/{}", name))
                 .map_err(|e| LuaError::RuntimeError(format!("could not stat {:?}", name)))?
                 .len())
         }).unwrap();
@@ -138,7 +207,7 @@ impl BuildEnv {
         ).unwrap();
         build_functions.set("environment", build_environment).unwrap();
         let globals = lua_ctx.globals();
-        globals.set("Build", build_functions);
+        globals.set("Build", build_functions).unwrap();
         Ok(())
     }
 
