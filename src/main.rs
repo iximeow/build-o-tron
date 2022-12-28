@@ -168,22 +168,18 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     let remote_path = format!("{}/{}", path.0, path.1);
     let sha = path.2;
 
-    let commit_id: Option<u64> = if sha.len() >= 7 {
-        ctx.conn.lock().unwrap()
-            .query_row("select id from commits where sha like ?1;", [&format!("{}%", sha)], |row| row.get(0))
+    let (commit_id, sha): (u64, String) = if sha.len() >= 7 {
+        match ctx.conn.lock().unwrap()
+            .query_row("select id, sha from commits where sha like ?1;", [&format!("{}%", sha)], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
             .optional()
-            .expect("can query")
-    } else {
-        None
-    };
-
-    let commit_id: u64 = match commit_id {
-        Some(commit_id) => {
-            commit_id
-        },
-        None => {
-            return (StatusCode::NOT_FOUND, Html("<html><body>no such commit</body></html>".to_string()));
+            .expect("can query") {
+            Some((commit_id, sha)) => (commit_id, sha),
+            None => {
+                return (StatusCode::NOT_FOUND, Html("<html><body>no such commit</body></html>".to_string()));
+            }
         }
+    } else {
+        return (StatusCode::NOT_FOUND, Html("<html><body>no such commit</body></html>".to_string()));
     };
 
     let (remote_id, repo_id): (u64, u64) = ctx.conn.lock().unwrap()
