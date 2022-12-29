@@ -224,13 +224,15 @@ impl BuildEnv {
 
     pub async fn run_build(self, script: &[u8]) -> Result<(), LuaError> {
         let script = script.to_vec();
-        let res: Result<(), LuaError> = std::thread::spawn(move || {
-            self.lua.context(|lua_ctx| {
-                lua_ctx.load(&script)
-                    .set_name("goodfile")?
-                    .exec()
-            })
-        }).join().unwrap();
+        let res: Result<(), LuaError> = tokio::task::spawn_blocking(|| {
+            std::thread::spawn(move || {
+                self.lua.context(|lua_ctx| {
+                    lua_ctx.load(&script)
+                        .set_name("goodfile")?
+                        .exec()
+                })
+            }).join().unwrap()
+        }).await.unwrap();
         eprintln!("lua res: {:?}", res);
         res
     }

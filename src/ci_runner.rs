@@ -16,6 +16,8 @@ use std::marker::Unpin;
 mod lua;
 mod io;
 
+use crate::io::ArtifactStream;
+
 #[derive(Debug)]
 enum WorkAcquireError {
     Reqwest(reqwest::Error),
@@ -100,9 +102,7 @@ impl RunningJob {
 
         if resp.status() == StatusCode::OK {
             eprintln!("[+] artifact '{}' started", name);
-            Ok(ArtifactStream {
-                sender,
-            })
+            Ok(ArtifactStream::new(sender))
         } else {
             Err(format!("[-] unable to create artifact: {:?}", resp))
         }
@@ -316,41 +316,6 @@ impl RunningJob {
         }
 
         Ok(())
-    }
-}
-
-struct ArtifactStream {
-    sender: hyper::body::Sender,
-}
-
-impl tokio::io::AsyncWrite for ArtifactStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &[u8]
-    ) -> Poll<Result<usize, std::io::Error>> {
-        match self.get_mut().sender.try_send_data(buf.to_vec().into()) {
-            Ok(()) => {
-                Poll::Ready(Ok(buf.len()))
-            },
-            _ => {
-                Poll::Pending
-            }
-        }
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut Context
-    ) -> Poll<Result<(), std::io::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        _cx: &mut Context
-    ) -> Poll<Result<(), std::io::Error>> {
-        Poll::Ready(Ok(()))
     }
 }
 
