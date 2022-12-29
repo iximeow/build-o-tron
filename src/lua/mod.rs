@@ -105,6 +105,13 @@ impl BuildEnv {
                         cwd,
                     }
                 },
+                LuaValue::Nil => {
+                    RunParams {
+                        step: None,
+                        name: None,
+                        cwd: None,
+                    }
+                }
                 other => {
                     return Err(LuaError::RuntimeError(format!("argument 2 was not a table: {:?}", other)));
                 }
