@@ -499,6 +499,6 @@ async fn main() {
                 activate_job(Arc::clone(&dbctx), &job, &mut channel).await;
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
