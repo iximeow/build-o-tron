@@ -4,6 +4,7 @@ use rlua::prelude::*;
 
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
+use std::time::{UNIX_EPOCH, SystemTime};
 
 pub const DEFAULT_RUST_GOODFILE: &'static [u8] = include_bytes!("../../config/goodfiles/rust.lua");
 
@@ -142,6 +143,15 @@ impl BuildEnv {
         })
             .map_err(|e| format!("problem defining metric function: {:?}", e))?;
 
+        let now_ms = lua_ctx.create_function(move |_, ()| {
+            let now = SystemTime::now();
+            Ok(now
+                .duration_since(UNIX_EPOCH)
+                .expect("now is later than epoch")
+                .as_millis() as u64)
+        })
+            .map_err(|e| format!("problem defining now_ms function: {:?}", e))?;
+
         let job_ref = Arc::clone(&self.job);
         let artifact = lua_ctx.create_function(move |_, (path, name): (String, Option<String>)| {
             let path: PathBuf = path.into();
@@ -214,6 +224,7 @@ impl BuildEnv {
                 ("metric", metric),
                 ("error", error),
                 ("artifact", artifact),
+                ("now_ms", now_ms),
             ]
         ).unwrap();
         build_functions.set("environment", build_environment).unwrap();
