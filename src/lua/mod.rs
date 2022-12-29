@@ -118,6 +118,7 @@ impl BuildEnv {
                 }
             };
             eprintln!("args: {:?}", args);
+            eprintln!("  params: {:?}", params);
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
