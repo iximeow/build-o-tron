@@ -14,6 +14,7 @@ use std::pin::Pin;
 use std::marker::Unpin;
 
 mod lua;
+mod io;
 
 #[derive(Debug)]
 enum WorkAcquireError {
@@ -73,21 +74,6 @@ impl JobEnv {
 pub struct RunningJob {
     job: RequestedJob,
     client: RunnerClient,
-}
-
-async fn forward_data(mut source: impl AsyncRead + Unpin, mut dest: impl AsyncWrite + Unpin) -> Result<(), String> {
-    let mut buf = vec![0; 1024 * 1024];
-    loop {
-        let n_read = source.read(&mut buf).await
-            .map_err(|e| format!("failed to read: {:?}", e))?;
-
-        if n_read == 0 {
-            return Ok(());
-        }
-
-        dest.write_all(&buf[..n_read]).await
-            .map_err(|e| format!("failed to write: {:?}", e))?;
-    }
 }
 
 impl RunningJob {
@@ -182,11 +168,11 @@ impl RunningJob {
 
     async fn execute_command(&self, mut command: Command, name: &str, desc: &str) -> Result<ExitStatus, String> {
         eprintln!("[.] running {}", name);
-        let stdout_artifact = self.create_artifact(
+        let mut stdout_artifact = self.create_artifact(
             &format!("{} (stdout)", name),
             &format!("{} (stdout)", desc)
         ).await.expect("works");
-        let stderr_artifact = self.create_artifact(
+        let mut stderr_artifact = self.create_artifact(
             &format!("{} (stderr)", name),
             &format!("{} (stderr)", desc)
         ).await.expect("works");
@@ -198,13 +184,13 @@ impl RunningJob {
             .spawn()
             .map_err(|e| format!("failed to spawn '{}', {:?}", name, e))?;
 
-        let child_stdout = child.stdout.take().unwrap();
-        let child_stderr = child.stderr.take().unwrap();
+        let mut child_stdout = child.stdout.take().unwrap();
+        let mut child_stderr = child.stderr.take().unwrap();
 
         eprintln!("[.] '{}': forwarding stdout", name);
-        tokio::spawn(forward_data(child_stdout, stdout_artifact));
+        tokio::spawn(async move { crate::io::forward_data(&mut child_stdout, &mut stdout_artifact).await });
         eprintln!("[.] '{}': forwarding stderr", name);
-        tokio::spawn(forward_data(child_stderr, stderr_artifact));
+        tokio::spawn(async move { crate::io::forward_data(&mut child_stderr, &mut stderr_artifact).await });
 
         let res = child.wait().await
             .map_err(|e| format!("failed to wait? {:?}", e))?;

@@ -24,6 +24,7 @@ use serde_json::json;
 mod dbctx;
 mod sql;
 mod notifier;
+mod io;
 
 use crate::dbctx::{DbCtx, PendingJob};
 use crate::sql::JobResult;

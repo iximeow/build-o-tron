@@ -16,6 +16,8 @@ serde_derive = "*"
 serde_json = "*"
 rand = "*"
 tokio = { version = "*", features = ["full"] }
+console-subscriber = "*"
+tokio-console = "*"
 tokio-stream = "*"
 hyper = "*"
 futures-util = "*"

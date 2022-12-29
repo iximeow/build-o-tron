@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 mod sql;
 mod dbctx;
 mod notifier;
+mod io;
 
 use sql::JobState;
 use dbctx::DbCtx;

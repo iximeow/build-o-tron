@@ -162,11 +162,15 @@ impl BuildEnv {
                 .build()
                 .unwrap();
             rt.block_on(async move {
-                let artifact = job_ref.lock().unwrap().create_artifact(&name, &format!("{} (from {})", name, path.display())).await
+                let mut artifact = job_ref.lock().unwrap().create_artifact(&name, &format!("{} (from {})", name, path.display())).await
                     .map_err(|e| LuaError::RuntimeError(format!("create_artifact error: {:?}", e)))
                     .unwrap();
-                crate::forward_data(tokio::fs::File::open(&format!("tmpdir/{}", path.display())).await.unwrap(), artifact).await
-                    .map_err(|e| LuaError::RuntimeError(format!("failed uploading data for {}: {:?}", name, e)))
+                let mut file = tokio::fs::File::open(&format!("tmpdir/{}", path.display())).await.unwrap();
+                eprintln!("uploading...");
+                crate::io::forward_data(&mut file, &mut artifact).await
+                    .map_err(|e| LuaError::RuntimeError(format!("failed uploading data for {}: {:?}", name, e)))?;
+                std::mem::drop(artifact);
+                Ok(())
             })
         })
             .map_err(|e| format!("problem defining metric function: {:?}", e))?;
