@@ -40,11 +40,8 @@ impl ArtifactDescriptor {
     }
 
     pub async fn store_all(&mut self, mut data: axum::extract::BodyStream) -> Result<(), String> {
-        eprintln!("new store...");
         loop {
-            eprint!("read...");
             let chunk = data.next().await;
-            eprintln!("!");
 
             let chunk = match chunk {
                 Some(Ok(chunk)) => chunk,
