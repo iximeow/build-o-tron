@@ -243,6 +243,17 @@ impl ClientJob {
                         "object_id": "10",
                     })).await.unwrap();
                 },
+                "metric" => {
+                    let name = msg.as_object().unwrap().get("name").unwrap().as_str().unwrap();
+                    let value = msg.as_object().unwrap().get("value").unwrap().as_str().unwrap();
+
+                    self.dbctx.insert_metric(self.job.id, name, value)
+                        .expect("TODO handle metric insert error?");
+                }
+                "command" => {
+                    // record information about commands, start/stop, etc. probably also allow
+                    // artifacts to be attached to commands and default to attaching stdout/stderr?
+                }
                 other => {
                     eprintln!("unhandled message kind {:?} ({:?})", msg_kind, msg);
                 }

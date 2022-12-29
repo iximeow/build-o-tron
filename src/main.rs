@@ -23,6 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
+mod io;
 mod sql;
 mod notifier;
 mod dbctx;
@@ -245,6 +246,23 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         None
     };
 
+    let metrics = ctx.metrics_for_job(job_id).unwrap();
+    let metrics_section = if metrics.len() > 0 {
+        let mut section = String::new();
+        section.push_str("<div>");
+        section.push_str("<h3>metrics</h3>");
+        section.push_str("<table style='font-family: monospace;'>");
+        section.push_str("<tr><th>name</th><th>value</th></tr>");
+        for metric in metrics {
+            section.push_str(&format!("<tr><td>{}</td><td>{}</td></tr>", &metric.name, &metric.value));
+        }
+        section.push_str("</table>");
+        section.push_str("</div>");
+        Some(section)
+    } else {
+        None
+    };
+
     let mut html = String::new();
     html.push_str("<html>\n");
     html.push_str(&format!("  {}\n", head));
@@ -261,6 +279,9 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     if let Some(output) = output {
         html.push_str("    <div>last build output</div>\n");
         html.push_str(&format!("    {}\n", output));
+    }
+    if let Some(metrics) = metrics_section {
+        html.push_str(&metrics);
     }
     html.push_str("  </body>\n");
     html.push_str("</html>");

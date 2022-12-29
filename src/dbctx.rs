@@ -39,6 +39,14 @@ pub enum TokenValidity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetricRecord {
+    pub id: u64,
+    pub job_id: u64,
+    pub name: String,
+    pub value: String
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactRecord {
     pub id: u64,
     pub job_id: u64,
@@ -58,12 +66,24 @@ impl DbCtx {
         let conn = self.conn.lock().unwrap();
         conn.execute(sql::CREATE_ARTIFACTS_TABLE, ()).unwrap();
         conn.execute(sql::CREATE_JOBS_TABLE, ()).unwrap();
+        conn.execute(sql::CREATE_METRICS_TABLE, ()).unwrap();
         conn.execute(sql::CREATE_COMMITS_TABLE, ()).unwrap();
         conn.execute(sql::CREATE_REPOS_TABLE, ()).unwrap();
         conn.execute(sql::CREATE_REPO_NAME_INDEX, ()).unwrap();
         conn.execute(sql::CREATE_REMOTES_TABLE, ()).unwrap();
         conn.execute(sql::CREATE_REMOTES_INDEX, ()).unwrap();
 
+        Ok(())
+    }
+
+    pub fn insert_metric(&self, job_id: u64, name: &str, value: &str) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn
+            .execute(
+                "insert into metrics (job_id, name, value) values (?1, ?2, ?3) on conflict (job_id, name) do update set value=excluded.value",
+                (job_id, name, value)
+            )
+            .expect("can upsert");
         Ok(())
     }
 
@@ -216,6 +236,21 @@ impl DbCtx {
         assert_eq!(1, rows_modified);
 
         Ok(conn.last_insert_rowid() as u64)
+    }
+
+    pub fn metrics_for_job(&self, job: u64) -> Result<Vec<MetricRecord>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut metrics_query = conn.prepare(sql::METRICS_FOR_JOB).unwrap();
+        let mut result = metrics_query.query([job]).unwrap();
+        let mut metrics = Vec::new();
+
+        while let Some(row) = result.next().unwrap() {
+            let (id, job_id, name, value): (u64, u64, String, String) = row.try_into().unwrap();
+            metrics.push(MetricRecord { id, job_id, name, value });
+        }
+
+        Ok(metrics)
     }
 
     pub fn artifacts_for_job(&self, job: u64) -> Result<Vec<ArtifactRecord>, String> {

@@ -50,6 +50,14 @@ pub const CREATE_JOBS_TABLE: &'static str = "\
         build_result INTEGER,
         final_status TEXT);";
 
+pub const CREATE_METRICS_TABLE: &'static str = "\
+    CREATE TABLE IF NOT EXISTS metrics (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id INTEGER,
+        name TEXT,
+        value TEXT,
+        UNIQUE(job_id, name)
+    );";
+
 pub const CREATE_COMMITS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS commits (id INTEGER PRIMARY KEY AUTOINCREMENT, sha TEXT UNIQUE);";
 
@@ -89,6 +97,9 @@ pub const PENDING_JOBS: &'static str = "\
 
 pub const LAST_ARTIFACTS_FOR_JOB: &'static str = "\
     select * from artifacts where job_id=?1 and (name like \"%(stderr)%\" or name like \"%(stdout)%\") order by id desc limit 2;";
+
+pub const METRICS_FOR_JOB: &'static str = "\
+    select * from metrics where job_id=?1 order by id asc;";
 
 pub const COMMIT_TO_ID: &'static str = "\
     select id from commits where sha=?1;";

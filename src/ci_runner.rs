@@ -82,7 +82,8 @@ impl RunningJob {
     async fn send_metric(&mut self, name: &str, value: String) -> Result<(), String> {
         self.client.send(serde_json::json!({
             "kind": "metric",
-            "value": value.to_string(),
+            "name": name,
+            "value": value,
         })).await
             .map_err(|e| format!("failed to send metric {}: {:?})", name, e))
     }
