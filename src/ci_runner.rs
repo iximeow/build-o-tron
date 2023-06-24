@@ -6,7 +6,6 @@ use tokio::process::Command;
 use std::process::Stdio;
 use std::process::ExitStatus;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
 use serde::{Deserialize, de::DeserializeOwned, Serialize};
 use std::task::{Context, Poll};
