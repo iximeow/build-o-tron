@@ -442,6 +442,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let mut args = std::env::args();
+    args.next().expect("first arg exists");
     let config_path = args.next().unwrap_or("./webserver_config.json".to_string());
     let web_config: WebserverConfig = serde_json::from_reader(std::fs::File::open(config_path).expect("file exists and is accessible")).expect("valid json for WebserverConfig");
     let mut psks = PSKS.write().expect("can write lock");
