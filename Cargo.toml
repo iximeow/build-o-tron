@@ -6,7 +6,7 @@ license = "0BSD"
 edition = "2021"
 
 [dependencies]
-# warp = { version = "*", features = ["tls"] }
+lazy_static = "*"
 axum = { version = "*" }
 axum-server = { version = "*", features = ["tls-rustls"] }
 handlebars = "*"

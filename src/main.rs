@@ -2,6 +2,9 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
+use lazy_static::lazy_static;
+use std::sync::RwLock;
+use serde_derive::{Deserialize, Serialize};
 use tokio::spawn;
 use std::path::PathBuf;
 use axum_server::tls_rustls::RustlsConfig;
@@ -34,7 +37,26 @@ use dbctx::DbCtx;
 
 use rusqlite::OptionalExtension;
 
-const PSKS: &'static [&'static [u8]] = &[];
+#[derive(Serialize, Deserialize)]
+struct WebserverConfig {
+    psks: Vec<GithubPsk>,
+    cert_path: PathBuf,
+    key_path: PathBuf,
+    config_path: PathBuf,
+    db_path: PathBuf,
+    debug_addr: Option<String>,
+    server_addr: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct GithubPsk {
+    key: String,
+    gh_user: String,
+}
+
+lazy_static! {
+    static ref PSKS: RwLock<Vec<GithubPsk>> = RwLock::new(Vec::new());
+}
 
 #[derive(Copy, Clone, Debug)]
 enum GithubHookError {
@@ -162,6 +184,10 @@ async fn handle_github_event(ctx: Arc<DbCtx>, owner: String, repo: String, event
             "".into_response()
         }
     }
+}
+
+async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
+    "hello and welcome to my websight"
 }
 
 async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
@@ -311,8 +337,8 @@ async fn handle_repo_event(Path(path): Path<(String, String)>, headers: HeaderMa
 
     let mut hmac_ok = false;
 
-    for psk in PSKS.iter() {
-        let mut mac = Hmac::<Sha256>::new_from_slice(psk)
+    for psk in PSKS.read().unwrap().iter() {
+        let mut mac = Hmac::<Sha256>::new_from_slice(psk.key.as_bytes())
             .expect("hmac can be constructed");
         mac.update(&body);
         let result = mac.finalize().into_bytes().to_vec();
@@ -342,7 +368,7 @@ async fn handle_repo_event(Path(path): Path<(String, String)>, headers: HeaderMa
 }
 
 
-async fn make_app_server(cfg_path: &'static str, db_path: &'static str) -> Router {
+async fn make_app_server(cfg_path: &PathBuf, db_path: &PathBuf) -> Router {
     /*
 
     // GET /hello/warp => 200 OK with body "Hello, warp!"
@@ -406,6 +432,7 @@ async fn make_app_server(cfg_path: &'static str, db_path: &'static str) -> Route
     Router::new()
         .route("/:owner/:repo/:sha", get(handle_commit_status))
         .route("/:owner/:repo", post(handle_repo_event))
+        .route("/", get(handle_ci_index))
         .fallback(fallback_get)
         .with_state(Arc::new(DbCtx::new(cfg_path, db_path)))
 }
@@ -413,14 +440,29 @@ async fn make_app_server(cfg_path: &'static str, db_path: &'static str) -> Route
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
+
+    let mut args = std::env::args();
+    let config_path = args.next().unwrap_or("./webserver_config.json".to_string());
+    let web_config: WebserverConfig = serde_json::from_reader(std::fs::File::open(config_path).expect("file exists and is accessible")).expect("valid json for WebserverConfig");
+    let mut psks = PSKS.write().expect("can write lock");
+    *psks = web_config.psks.clone();
+
     let config = RustlsConfig::from_pem_file(
-        PathBuf::from("/etc/letsencrypt/live/ci.butactuallyin.space/fullchain.pem"),
-        PathBuf::from("/etc/letsencrypt/live/ci.butactuallyin.space/privkey.pem"),
+        web_config.cert_path.clone(),
+        web_config.key_path.clone(),
     ).await.unwrap();
-    spawn(axum_server::bind_rustls("127.0.0.1:8080".parse().unwrap(), config.clone())
-        .serve(make_app_server("/root/ixi_ci_server/config", "/root/ixi_ci_server/state.db").await.into_make_service()));
-    axum_server::bind_rustls("0.0.0.0:443".parse().unwrap(), config)
-        .serve(make_app_server("/root/ixi_ci_server/config", "/root/ixi_ci_server/state.db").await.into_make_service())
-        .await
-        .unwrap();
+
+    let config_path = web_config.config_path.clone();
+    let db_path = web_config.db_path.clone();
+    if let Some(addr) = web_config.debug_addr.as_ref() {
+        spawn(axum_server::bind_rustls("127.0.0.1:8080".parse().unwrap(), config.clone())
+            .serve(make_app_server(&config_path, &db_path).await.into_make_service()));
+    }
+    if let Some(addr) = web_config.server_addr.as_ref() {
+        spawn(axum_server::bind_rustls("0.0.0.0:443".parse().unwrap(), config)
+            .serve(make_app_server(&config_path, &db_path).await.into_make_service()));
+    }
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    }
 }

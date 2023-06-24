@@ -395,6 +395,7 @@ impl RunnerClient {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
     let secret = std::fs::read_to_string("./auth_secret").unwrap();
     let client = reqwest::ClientBuilder::new()
         .connect_timeout(Duration::from_millis(1000))
