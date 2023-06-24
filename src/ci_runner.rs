@@ -136,36 +136,6 @@ impl RunningJob {
         Ok(())
     }
 
-    async fn execute_goodfile(&self) -> Result<String, String> {
-        Ok("string".to_string())
-    }
-
-    async fn default_goodfile(&self) -> Result<String, String> {
-        let mut build = Command::new("cargo");
-        build
-            .current_dir("tmpdir")
-            .arg("build");
-
-        let build_res = self.execute_command(build, "cargo build log", "cargo build").await?;
-
-        if !build_res.success() {
-            return Err(format!("cargo build failed: {:?}", build_res));
-        }
-
-        let mut test = Command::new("cargo");
-        test
-            .current_dir("tmpdir")
-            .arg("test");
-
-        let test_res = self.execute_command(test, "cargo test log", "cargo test").await?;
-
-        match test_res.code() {
-            Some(0) => Ok("pass".to_string()),
-            Some(n) => Ok(format!("error: {}", n)),
-            None => Ok(format!("abnormal exit")),
-        }
-    }
-
     async fn execute_command(&self, mut command: Command, name: &str, desc: &str) -> Result<ExitStatus, String> {
         eprintln!("[.] running {}", name);
         let mut stdout_artifact = self.create_artifact(
