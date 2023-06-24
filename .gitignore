@@ -5,3 +5,4 @@ state.db
 *.swp
 auth_secret
 driver_config.json
+webserver_config.json
