@@ -315,9 +315,22 @@ async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
                 let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
                 let duration = if let Some(start_time) = job.start_time {
                     if let Some(complete_time) = job.complete_time {
-                        let duration_ms = complete_time - start_time;
-                        let duration = duration_as_human_string(duration_ms);
-                        duration
+                        if complete_time < start_time {
+                            if job.state == JobState::Started {
+                                // this job has been restarted. the completed time is stale.
+                                // further, this is a currently active job.
+                                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
+                                let mut duration = duration_as_human_string(now_ms - start_time);
+                                duration.push_str(" (ongoing)");
+                                duration
+                            } else {
+                                "invalid data".to_string()
+                            }
+                        } else {
+                            let duration_ms = complete_time - start_time;
+                            let duration = duration_as_human_string(duration_ms);
+                            duration
+                        }
                     } else {
                         let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
                         let mut duration = duration_as_human_string(now_ms - start_time);
