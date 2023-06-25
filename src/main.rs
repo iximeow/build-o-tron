@@ -110,6 +110,34 @@ fn duration_as_human_string(duration_ms: u64) -> String {
     }
 }
 
+/// try producing a url for whatever caused this job to be started, if possible
+fn commit_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> Option<String> {
+    let remote = ctx.remote_by_id(job.remote_id).expect("query succeeds").expect("existing job references existing remote");
+
+    match remote.remote_api.as_str() {
+        "github" => {
+            Some(format!("{}/commit/{}", remote.remote_url, commit_sha))
+        },
+        "email" => {
+            None
+        },
+        _ => {
+            None
+        }
+    }
+}
+
+/// produce a url to the ci.butactuallyin.space job details page
+fn job_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> String {
+    let remote = ctx.remote_by_id(job.remote_id).expect("query succeeds").expect("existing job references existing remote");
+
+    if remote.remote_api != "github" {
+        eprintln!("job url for remote type {} can't be constructed, i think", &remote.remote_api);
+    }
+
+    format!("{}/{}", &remote.remote_path, commit_sha)
+}
+
 fn parse_push_event(body: serde_json::Value) -> Result<GithubEvent, GithubHookError> {
     let body = body.as_object()
         .ok_or(GithubHookError::BodyNotObject)?;
@@ -231,13 +259,19 @@ async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
         Ok(repos) => repos,
         Err(e) => {
             eprintln!("failed to get repos: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "gonna feel that one tomorrow".to_string());
+            return (StatusCode::INTERNAL_SERVER_ERROR, Html("gonna feel that one tomorrow".to_string()));
         }
     };
 
     let mut response = String::new();
 
     response.push_str("<html>\n");
+    response.push_str("<style>\n");
+    response.push_str(".build-table { font-family: monospace; border: 1px solid black; border-collapse: collapse; }\n");
+    response.push_str(".row-item { padding-left: 4px; padding-right: 4px; border-right: 1px solid black; }\n");
+    response.push_str(".odd-row { background: #eee; }\n");
+    response.push_str(".even-row { background: #ddd; }\n");
+    response.push_str("</style>\n");
     response.push_str("<h1>builds and build accessories</h1>\n");
 
     match repos.len() {
@@ -246,13 +280,15 @@ async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
         other => { response.push_str(&format!("<p>{} repos configured</p>\n", other)); },
     }
 
-    response.push_str("<table>\n");
+    response.push_str("<table class='build-table'>");
     response.push_str("<tr>\n");
-    let headings = ["repo", "last build", "build commit", "duration", "status", "result"];
+    let headings = ["repo", "last build", "job", "build commit", "duration", "status", "result"];
     for heading in headings {
-        response.push_str(&format!("<th>{}</th>", heading));
+        response.push_str(&format!("<th class='row-item'>{}</th>", heading));
     }
     response.push_str("</tr>\n");
+
+    let mut row_num = 0;
 
     for repo in repos {
         let mut most_recent_job: Option<Job> = None;
@@ -269,6 +305,12 @@ async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
         let row_html: String = match most_recent_job {
             Some(job) => {
                 let job_commit = ctx.commit_sha(job.commit_id).expect("job has a commit");
+                let commit_html = match commit_url(&job, &job_commit, &ctx) {
+                    Some(url) => format!("<a href=\"{}\">{}</a>", url, &job_commit),
+                    None => job_commit.clone()
+                };
+
+                let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx), job.id);
 
                 let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
                 let duration = if let Some(start_time) = job.start_time {
@@ -293,20 +335,18 @@ async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
                     Some(_) => "<span style='color:red;'>fail</span>",
                     None => match job.state {
                         JobState::Pending => { "unstarted" },
-                        JobState::Started => { "<span style='color:yellow;'>in progress</span>" },
+                        JobState::Started => { "<span style='color:darkgoldenrod;'>in progress</span>" },
                         _ => { "<span style='color:red;'>unreported</span>" }
                     }
                 };
 
-                let entries = [repo.name.as_str(), last_build_time.as_str(), job_commit.as_str(), &duration, &status, &result];
+                let entries = [repo.name.as_str(), last_build_time.as_str(), job_html.as_str(), commit_html.as_str(), &duration, &status, &result];
                 let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
 
                 let mut row_html = String::new();
-                row_html.push_str("<tr>");
                 for entry in entries {
-                    row_html.push_str(&format!("<td>{}</td>", entry));
+                    row_html.push_str(&format!("<td class='row-item'>{}</td>", entry));
                 }
-                row_html.push_str("</tr>");
                 row_html
             }
             None => {
@@ -314,21 +354,26 @@ async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
                 let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
 
                 let mut row_html = String::new();
-                row_html.push_str("<tr>");
                 for entry in entries {
-                    row_html.push_str(&format!("<td>{}</td>", entry));
+                    row_html.push_str(&format!("<td class='row-item'>{}</td>", entry));
                 }
-                row_html.push_str("</tr>");
                 row_html
             }
         };
 
+        let row_index = row_num % 2;
+        response.push_str(&format!("<tr class=\"{}\">", ["even-row", "odd-row"][row_index]));
         response.push_str(&row_html);
+        response.push_str("</tr>");
+        response.push('\n');
+
+        row_num += 1;
     }
+    response.push_str("</table>");
 
     response.push_str("</html>");
 
-    (StatusCode::OK, response)
+    (StatusCode::OK, Html(response))
 }
 
 async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
@@ -366,7 +411,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
 
     let deployed = false;
 
-    let head = format!("<head><title>ci.butactuallin.space - {}</title></head>", repo_name);
+    let head = format!("<head><title>ci.butactuallyin.space - {}</title></head>", repo_name);
     let remote_commit_elem = format!("<a href=\"https://www.github.com/{}/commit/{}\">{}</a>", &remote_path, &sha, &sha);
     let status_elem = match state {
         JobState::Pending | JobState::Started => {

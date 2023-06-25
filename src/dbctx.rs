@@ -221,6 +221,20 @@ impl DbCtx {
             .map_err(|e| e.to_string())
     }
 
+    pub fn remote_by_id(&self, id: u64) -> Result<Option<Remote>, String> {
+        self.conn.lock()
+            .unwrap()
+            .query_row("select * from remotes where id=?1", [id], |row| {
+                let (id, repo_id, remote_path, remote_api, remote_url, remote_git_url, notifier_config_path) = row.try_into().unwrap();
+
+                Ok(Remote {
+                    id, repo_id, remote_path, remote_api, remote_url, remote_git_url, notifier_config_path
+                })
+            })
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
     pub fn repo_id_by_remote(&self, remote_id: u64) -> Result<Option<u64>, String> {
         self.conn.lock()
             .unwrap()
