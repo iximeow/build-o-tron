@@ -302,6 +302,8 @@ async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
             }
         }
 
+        let repo_html = format!("<a href=\"/{}\">{}</a>", &repo.name, &repo.name);
+
         let row_html: String = match most_recent_job {
             Some(job) => {
                 let job_commit = ctx.commit_sha(job.commit_id).expect("job has a commit");
@@ -353,7 +355,7 @@ async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
                     }
                 };
 
-                let entries = [repo.name.as_str(), last_build_time.as_str(), job_html.as_str(), commit_html.as_str(), &duration, &status, &result];
+                let entries = [repo_html.as_str(), last_build_time.as_str(), job_html.as_str(), commit_html.as_str(), &duration, &status, &result];
                 let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
 
                 let mut row_html = String::new();
@@ -363,7 +365,7 @@ async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
                 row_html
             }
             None => {
-                let entries = [repo.name.as_str()];
+                let entries = [repo_html.as_str()];
                 let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
 
                 let mut row_html = String::new();
@@ -514,6 +516,115 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     (StatusCode::OK, Html(html))
 }
 
+async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
+    eprintln!("get repo summary: {:?}", path);
+
+    let mut last_builds = Vec::new();
+
+    let (repo_id, repo_name): (u64, String) = match ctx.conn.lock().unwrap()
+        .query_row("select id, repo_name from repos where repo_name=?1;", [&path], |row| Ok((row.get(0).unwrap(), row.get(1).unwrap())))
+        .optional()
+        .unwrap() {
+        Some(elem) => elem,
+        None => {
+            eprintln!("no repo named {}", path);
+            return (StatusCode::NOT_FOUND, Html(String::new()));
+        }
+    };
+
+    for remote in ctx.remotes_by_repo(repo_id).expect("can get repo from a path") {
+        let mut last_ten_jobs = ctx.recent_jobs_from_remote(remote.id, 10).expect("can look up jobs for a repo");
+        last_builds.extend(last_ten_jobs.drain(..));
+    }
+    last_builds.sort_by_key(|job| -(job.created_time as i64));
+
+    let mut response = String::new();
+    response.push_str("<html>\n");
+    response.push_str(&format!("<title> ci.butactuallyin.space - {} </title>\n", repo_name));
+    response.push_str("<style>\n");
+    response.push_str(".build-table { font-family: monospace; border: 1px solid black; border-collapse: collapse; }\n");
+    response.push_str(".row-item { padding-left: 4px; padding-right: 4px; border-right: 1px solid black; }\n");
+    response.push_str(".odd-row { background: #eee; }\n");
+    response.push_str(".even-row { background: #ddd; }\n");
+    response.push_str("</style>\n");
+    response.push_str(&format!("<h1>{} build history</h1>\n", repo_name));
+    response.push_str("<a href=/>full repos index</a><p> </p>\n");
+
+    response.push_str("<table class='build-table'>");
+    response.push_str("<tr>\n");
+    let headings = ["last build", "job", "build commit", "duration", "status", "result"];
+    for heading in headings {
+        response.push_str(&format!("<th class='row-item'>{}</th>", heading));
+    }
+    response.push_str("</tr>\n");
+
+    for job in last_builds.iter().take(10) {
+        let job_commit = ctx.commit_sha(job.commit_id).expect("job has a commit");
+        let commit_html = match commit_url(&job, &job_commit, &ctx) {
+            Some(url) => format!("<a href=\"{}\">{}</a>", url, &job_commit),
+            None => job_commit.clone()
+        };
+
+        let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx), job.id);
+
+        let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
+        let duration = if let Some(start_time) = job.start_time {
+            if let Some(complete_time) = job.complete_time {
+                if complete_time < start_time {
+                    if job.state == JobState::Started {
+                        // this job has been restarted. the completed time is stale.
+                        // further, this is a currently active job.
+                        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
+                        let mut duration = duration_as_human_string(now_ms - start_time);
+                        duration.push_str(" (ongoing)");
+                        duration
+                    } else {
+                        "invalid data".to_string()
+                    }
+                } else {
+                    let duration_ms = complete_time - start_time;
+                    let duration = duration_as_human_string(duration_ms);
+                    duration
+                }
+            } else {
+                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
+                let mut duration = duration_as_human_string(now_ms - start_time);
+                duration.push_str(" (ongoing)");
+                duration
+            }
+        } else {
+            "not yet run".to_owned()
+        };
+
+        let status = format!("{:?}", job.state).to_lowercase();
+
+        let result = match job.build_result {
+            Some(0) => "<span style='color:green;'>pass</span>",
+            Some(_) => "<span style='color:red;'>fail</span>",
+            None => match job.state {
+                JobState::Pending => { "unstarted" },
+                JobState::Started => { "<span style='color:darkgoldenrod;'>in progress</span>" },
+                _ => { "<span style='color:red;'>unreported</span>" }
+            }
+        };
+
+        let entries = [last_build_time.as_str(), job_html.as_str(), commit_html.as_str(), &duration, &status, &result];
+        let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
+
+        let mut row_html = String::new();
+        for entry in entries {
+            row_html.push_str(&format!("<td class='row-item'>{}</td>", entry));
+        }
+
+        response.push_str("<tr>");
+        response.push_str(&row_html);
+        response.push_str("</tr>\n");
+    }
+    response.push_str("</html>");
+
+    (StatusCode::OK, Html(response))
+}
+
 async fn handle_repo_event(Path(path): Path<(String, String)>, headers: HeaderMap, State(ctx): State<Arc<DbCtx>>, body: Bytes) -> impl IntoResponse {
     let json: Result<serde_json::Value, _> = serde_json::from_slice(&body);
     eprintln!("repo event: {:?} {:?} {:?}", path.0, path.1, headers);
@@ -630,6 +741,7 @@ async fn make_app_server(cfg_path: &PathBuf, db_path: &PathBuf) -> Router {
 
     Router::new()
         .route("/:owner/:repo/:sha", get(handle_commit_status))
+        .route("/:owner", get(handle_repo_summary))
         .route("/:owner/:repo", post(handle_repo_event))
         .route("/", get(handle_ci_index))
         .fallback(fallback_get)

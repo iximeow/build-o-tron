@@ -347,15 +347,22 @@ impl DbCtx {
     }
 
     pub fn last_job_from_remote(&self, id: u64) -> Result<Option<Job>, String> {
+        self.recent_jobs_from_remote(id, 1)
+            .map(|mut jobs| jobs.pop())
+    }
+
+    pub fn recent_jobs_from_remote(&self, id: u64, limit: u64) -> Result<Vec<Job>, String> {
         let conn = self.conn.lock().unwrap();
 
-        let mut job_query = conn.prepare(sql::LAST_JOB_FROM_REMOTE).unwrap();
-        let mut result = job_query.query([id]).unwrap();
+        let mut job_query = conn.prepare(sql::LAST_JOBS_FROM_REMOTE).unwrap();
+        let mut result = job_query.query([id, limit]).unwrap();
 
-        let job = result.next().expect("can get next row, which may be None").map(|row| {
-            let (id, artifacts_path, state, run_host, remote_id, commit_id, created_time, start_time, complete_time, build_token, job_timeout, source, build_result, final_text) = row.try_into().unwrap();
+        let mut jobs = Vec::new();
+
+        while let Some(row) = result.next().unwrap() {
+            let (id, artifacts_path, state, run_host, remote_id, commit_id, created_time, start_time, complete_time, build_token, job_timeout, source, build_result, final_text)= row.try_into().unwrap();
             let state: u8 = state;
-            Job {
+            jobs.push(Job {
                 id,
                 artifacts_path,
                 state: state.try_into().unwrap(),
@@ -370,10 +377,10 @@ impl DbCtx {
                 source,
                 build_result,
                 final_text,
-            }
-        });
+            });
+        }
 
-        Ok(job)
+        Ok(jobs)
     }
 
     pub fn get_pending_jobs(&self) -> Result<Vec<PendingJob>, String> {
