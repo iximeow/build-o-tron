@@ -758,6 +758,8 @@ async fn main() {
     let web_config: WebserverConfig = serde_json::from_reader(std::fs::File::open(config_path).expect("file exists and is accessible")).expect("valid json for WebserverConfig");
     let mut psks = PSKS.write().expect("can write lock");
     *psks = web_config.psks.clone();
+    // drop write lock so we can read PSKS elsewhere WITHOUT deadlocking.
+    std::mem::drop(psks);
 
     let config = RustlsConfig::from_pem_file(
         web_config.cert_path.clone(),
