@@ -85,7 +85,7 @@ fn duration_as_human_string(duration_ms: u64) -> String {
 
     let duration_ms = duration_ms % 1000;
     let duration_sec = duration_sec % 60;
-    let duration_min = duration_hours % 60;
+    let duration_min = duration_min % 60;
     // no need to clamp hours, we're gonna just hope that it's a reasonable number of hours
 
     if duration_hours != 0 {
