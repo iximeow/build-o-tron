@@ -160,6 +160,13 @@ fn main() {
                         };
                         db.new_remote(repo_id, remote.as_str(), remote_kind.as_str(), config_path.as_str()).unwrap();
                         println!("[+] new remote created: repo '{}', {} remote at {}", &name, remote_kind, remote);
+                        match remote_kind.as_str() {
+                            "github" => {
+                                println!("[!] now go make sure your github repo has a webhook set for `https://ci.butactuallyin.space/{}` to receive at least the `push` event.", remote.as_str());
+                                println!("      the secret sent with calls to this webhook should be the same preshared secret as the CI server is configured to know.");
+                            }
+                            _ => { }
+                        }
                     }
                 },
                 AddItem::Remote { repo_name, remote, remote_kind, config } => {
