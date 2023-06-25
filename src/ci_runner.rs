@@ -384,7 +384,7 @@ async fn main() {
 
         let poll = client.post("https://ci.butactuallyin.space:9876/api/next_job")
             .header("user-agent", "ci-butactuallyin-space-runner")
-            .header("authorization", &secret)
+            .header("authorization", secret.trim())
             .body(body)
             .send()
             .await;
