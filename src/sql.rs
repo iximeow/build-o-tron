@@ -106,3 +106,10 @@ pub const COMMIT_TO_ID: &'static str = "\
 
 pub const REMOTES_FOR_REPO: &'static str = "\
     select * from remotes where repo_id=?1;";
+
+pub const ALL_REPOS: &'static str = "\
+    select * from repos;";
+
+pub const LAST_JOB_FROM_REMOTE: &'static str = "\
+    select * from jobs where remote_id=?1 order by created_time desc limit 1;";
+

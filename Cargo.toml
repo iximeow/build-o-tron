@@ -35,6 +35,7 @@ sha2 = "*"
 reqwest = { version = "*", features = ["rustls-tls-native-roots"] }
 clap = { version = "*", features = ["derive"] }
 rlua = "*"
+chrono = "*"
 
 [[bin]]
 name = "ci_webserver"

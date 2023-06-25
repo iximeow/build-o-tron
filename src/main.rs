@@ -2,6 +2,7 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
+use chrono::{Utc, TimeZone};
 use lazy_static::lazy_static;
 use std::sync::RwLock;
 use serde_derive::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ mod dbctx;
 
 use sql::JobState;
 
-use dbctx::DbCtx;
+use dbctx::{DbCtx, Job};
 
 use rusqlite::OptionalExtension;
 
@@ -69,6 +70,44 @@ enum GithubHookError {
 enum GithubEvent {
     Push { tip: String, repo_name: String, head_commit: serde_json::Map<String, serde_json::Value>, pusher: serde_json::Map<String, serde_json::Value> },
     Other {}
+}
+
+/// return a duration rendered as the largest two non-zero units.
+///
+/// 60000ms -> 1m
+/// 60001ms -> 1m
+/// 61000ms -> 1m1s
+///  1030ms -> 1.03s
+fn duration_as_human_string(duration_ms: u64) -> String {
+    let duration_sec = duration_ms / 1000;
+    let duration_min = duration_sec / 60;
+    let duration_hours = duration_min / 60;
+
+    let duration_ms = duration_ms % 1000;
+    let duration_sec = duration_sec & 60;
+    let duration_min = duration_hours & 60;
+    // no need to clamp hours, we're gonna just hope that it's a reasonable number of hours
+
+    if duration_hours != 0 {
+        let mut res = format!("{}h", duration_hours);
+        if duration_min != 0 {
+            res.push_str(&format!("{}m", duration_min));
+        }
+        res
+    } else if duration_min != 0 {
+        let mut res = format!("{}m", duration_min);
+        if duration_min != 0 {
+            res.push_str(&format!("{}s", duration_sec));
+        }
+        res
+    } else {
+        let mut res = format!("{}", duration_sec);
+        if duration_ms != 0 {
+            res.push_str(&format!(".{:03}", duration_ms));
+        }
+        res.push('s');
+        res
+    }
 }
 
 fn parse_push_event(body: serde_json::Value) -> Result<GithubEvent, GithubHookError> {
@@ -187,7 +226,109 @@ async fn handle_github_event(ctx: Arc<DbCtx>, owner: String, repo: String, event
 }
 
 async fn handle_ci_index(State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {
-    "hello and welcome to my websight"
+    eprintln!("root index");
+    let repos = match ctx.get_repos() {
+        Ok(repos) => repos,
+        Err(e) => {
+            eprintln!("failed to get repos: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "gonna feel that one tomorrow".to_string());
+        }
+    };
+
+    let mut response = String::new();
+
+    response.push_str("<html>\n");
+    response.push_str("<h1>builds and build accessories</h1>\n");
+
+    match repos.len() {
+        0 => { response.push_str(&format!("<p>no repos configured, so there are no builds</p>\n")); },
+        1 => { response.push_str("<p>1 repo configured</p>\n"); },
+        other => { response.push_str(&format!("<p>{} repos configured</p>\n", other)); },
+    }
+
+    response.push_str("<table>\n");
+    response.push_str("<tr>\n");
+    let headings = ["repo", "last build", "build commit", "duration", "status", "result"];
+    for heading in headings {
+        response.push_str(&format!("<th>{}</th>", heading));
+    }
+    response.push_str("</tr>\n");
+
+    for repo in repos {
+        let mut most_recent_job: Option<Job> = None;
+
+        for remote in ctx.remotes_by_repo(repo.id).expect("remotes by repo works") {
+            let last_job = ctx.last_job_from_remote(remote.id).expect("job by remote works");
+            if let Some(last_job) = last_job {
+                if most_recent_job.as_ref().map(|job| job.created_time < last_job.created_time).unwrap_or(true) {
+                    most_recent_job = Some(last_job);
+                }
+            }
+        }
+
+        let row_html: String = match most_recent_job {
+            Some(job) => {
+                let job_commit = ctx.commit_sha(job.commit_id).expect("job has a commit");
+
+                let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
+                let duration = if let Some(start_time) = job.start_time {
+                    if let Some(complete_time) = job.complete_time {
+                        let duration_ms = complete_time - start_time;
+                        let duration = duration_as_human_string(duration_ms);
+                        duration
+                    } else {
+                        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
+                        let mut duration = duration_as_human_string(now_ms - start_time);
+                        duration.push_str(" (ongoing)");
+                        duration
+                    }
+                } else {
+                    "not yet run".to_owned()
+                };
+
+                let status = format!("{:?}", job.state).to_lowercase();
+
+                let result = match job.build_result {
+                    Some(0) => "<span style='color:green;'>pass</span>",
+                    Some(_) => "<span style='color:red;'>fail</span>",
+                    None => match job.state {
+                        JobState::Pending => { "unstarted" },
+                        JobState::Started => { "<span style='color:yellow;'>in progress</span>" },
+                        _ => { "<span style='color:red;'>unreported</span>" }
+                    }
+                };
+
+                let entries = [repo.name.as_str(), last_build_time.as_str(), job_commit.as_str(), &duration, &status, &result];
+                let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
+
+                let mut row_html = String::new();
+                row_html.push_str("<tr>");
+                for entry in entries {
+                    row_html.push_str(&format!("<td>{}</td>", entry));
+                }
+                row_html.push_str("</tr>");
+                row_html
+            }
+            None => {
+                let entries = [repo.name.as_str()];
+                let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
+
+                let mut row_html = String::new();
+                row_html.push_str("<tr>");
+                for entry in entries {
+                    row_html.push_str(&format!("<td>{}</td>", entry));
+                }
+                row_html.push_str("</tr>");
+                row_html
+            }
+        };
+
+        response.push_str(&row_html);
+    }
+
+    response.push_str("</html>");
+
+    (StatusCode::OK, response)
 }
 
 async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(ctx): State<Arc<DbCtx>>) -> impl IntoResponse {

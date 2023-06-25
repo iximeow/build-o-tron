@@ -20,6 +20,41 @@ pub struct DbCtx {
 }
 
 #[derive(Debug, Clone)]
+pub struct Repo {
+    pub id: u64,
+    pub name: String,
+}
+
+#[derive(Debug)]
+pub struct Remote {
+    pub id: u64,
+    pub repo_id: u64,
+    pub remote_path: String,
+    pub remote_api: String,
+    pub remote_url: String,
+    pub remote_git_url: String,
+    pub notifier_config_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Job {
+    pub id: u64,
+    pub artifacts_path: Option<String>,
+    pub state: sql::JobState,
+    pub run_host: String,
+    pub remote_id: u64,
+    pub commit_id: u64,
+    pub created_time: u64,
+    pub start_time: Option<u64>,
+    pub complete_time: Option<u64>,
+    pub build_token: Option<String>,
+    pub job_timeout: Option<u64>,
+    pub source: Option<String>,
+    pub build_result: Option<u8>,
+    pub final_text: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PendingJob {
     pub id: u64,
     pub artifacts: Option<String>,
@@ -129,6 +164,17 @@ impl DbCtx {
         };
 
         ArtifactDescriptor::new(job_id, artifact_id).await
+    }
+
+    pub fn commit_sha(&self, commit_id: u64) -> Result<String, String> {
+        self.conn.lock()
+            .unwrap()
+            .query_row(
+                "select sha from commits where id=?1",
+                [commit_id],
+                |row| { row.get(0) }
+            )
+            .map_err(|e| e.to_string())
     }
 
     pub fn job_for_commit(&self, sha: &str) -> Result<Option<u64>, String> {
@@ -268,6 +314,54 @@ impl DbCtx {
         Ok(artifacts)
     }
 
+    pub fn get_repos(&self) -> Result<Vec<Repo>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut repos_query = conn.prepare(sql::ALL_REPOS).unwrap();
+        let mut repos = repos_query.query([]).unwrap();
+        let mut result = Vec::new();
+
+        while let Some(row) = repos.next().unwrap() {
+            let (id, repo_name) = row.try_into().unwrap();
+            result.push(Repo {
+                id,
+                name: repo_name,
+            });
+        }
+
+        Ok(result)
+    }
+
+    pub fn last_job_from_remote(&self, id: u64) -> Result<Option<Job>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut job_query = conn.prepare(sql::LAST_JOB_FROM_REMOTE).unwrap();
+        let mut result = job_query.query([id]).unwrap();
+
+        let job = result.next().expect("can get next row, which may be None").map(|row| {
+            let (id, artifacts_path, state, run_host, remote_id, commit_id, created_time, start_time, complete_time, build_token, job_timeout, source, build_result, final_text) = row.try_into().unwrap();
+            let state: u8 = state;
+            Job {
+                id,
+                artifacts_path,
+                state: state.try_into().unwrap(),
+                run_host,
+                remote_id,
+                commit_id,
+                created_time,
+                start_time,
+                complete_time,
+                build_token,
+                job_timeout,
+                source,
+                build_result,
+                final_text,
+            }
+        });
+
+        Ok(job)
+    }
+
     pub fn get_pending_jobs(&self) -> Result<Vec<PendingJob>, String> {
         let conn = self.conn.lock().unwrap();
 
@@ -289,17 +383,7 @@ impl DbCtx {
         Ok(pending)
     }
 
-    pub fn notifiers_by_repo(&self, repo_id: u64) -> Result<Vec<RemoteNotifier>, String> {
-        #[derive(Debug)]
-        #[allow(dead_code)]
-        struct Remote {
-            id: u64,
-            repo_id: u64,
-            remote_path: String,
-            remote_api: String,
-            notifier_config_path: String,
-        }
-
+    pub fn remotes_by_repo(&self, repo_id: u64) -> Result<Vec<Remote>, String> {
         let mut remotes: Vec<Remote> = Vec::new();
 
         let conn = self.conn.lock().unwrap();
@@ -308,10 +392,14 @@ impl DbCtx {
 
         while let Some(row) = remote_results.next().unwrap() {
             let (id, repo_id, remote_path, remote_api, remote_url, remote_git_url, notifier_config_path) = row.try_into().unwrap();
-            let _: String = remote_url;
-            let _: String = remote_git_url;
-            remotes.push(Remote { id, repo_id, remote_path, remote_api, notifier_config_path });
+            remotes.push(Remote { id, repo_id, remote_path, remote_api, remote_url, remote_git_url, notifier_config_path });
         }
+
+        Ok(remotes)
+    }
+
+    pub fn notifiers_by_repo(&self, repo_id: u64) -> Result<Vec<RemoteNotifier>, String> {
+        let remotes = self.remotes_by_repo(repo_id)?;
 
         let mut notifiers: Vec<RemoteNotifier> = Vec::new();
 
