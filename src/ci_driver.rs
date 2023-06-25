@@ -212,7 +212,9 @@ impl ClientJob {
                     let repo_id = self.dbctx.repo_id_by_remote(self.job.remote_id).unwrap().expect("remote exists");
 
                     for notifier in self.dbctx.notifiers_by_repo(repo_id).expect("can get notifiers") {
-                        notifier.tell_complete_job(&self.dbctx, repo_id, &self.sha, self.job.id, result.clone()).await.expect("can notify");
+                        if let Err(e) = notifier.tell_complete_job(&self.dbctx, repo_id, &self.sha, self.job.id, result.clone()).await {
+                            eprintln!("could not notify {:?}: {:?}", notifier.remote_path, e);
+                        }
                     }
 
                     let now = SystemTime::now()
