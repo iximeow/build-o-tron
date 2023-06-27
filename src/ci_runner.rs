@@ -44,6 +44,7 @@ impl RequestedJob {
         RunningJob {
             job: self,
             client,
+            current_step: StepTracker::new(),
         }
     }
 }
@@ -75,6 +76,35 @@ impl JobEnv {
 pub struct RunningJob {
     job: RequestedJob,
     client: RunnerClient,
+    current_step: StepTracker,
+}
+
+pub struct StepTracker {
+    scopes: Vec<String>
+}
+
+impl StepTracker {
+    pub fn new() -> Self {
+        StepTracker {
+            scopes: Vec::new()
+        }
+    }
+
+    pub fn push(&mut self, name: String) {
+        self.scopes.push(name);
+    }
+
+    pub fn pop(&mut self) {
+        self.scopes.pop();
+    }
+
+    pub fn clear(&mut self) {
+        self.scopes.clear();
+    }
+
+    pub fn full_step_path(&self) -> &[String] {
+        self.scopes.as_slice()
+    }
 }
 
 impl RunningJob {

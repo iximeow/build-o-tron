@@ -177,6 +177,31 @@ mod lua_exports {
             .map_err(|e| LuaError::RuntimeError(format!("could not stat {:?}", path)))?
             .len())
     }
+
+    pub mod step {
+        use crate::RunningJob;
+        use std::sync::{Arc, Mutex};
+
+        pub fn start(job_ref: Arc<Mutex<RunningJob>>, name: String) -> Result<(), rlua::Error> {
+            let mut job = job_ref.lock().unwrap();
+            job.current_step.clear();
+            job.current_step.push(name);
+            Ok(())
+        }
+
+        pub fn push(job_ref: Arc<Mutex<RunningJob>>, name: String) -> Result<(), rlua::Error> {
+            let mut job = job_ref.lock().unwrap();
+            job.current_step.push(name);
+            Ok(())
+        }
+
+        pub fn advance(job_ref: Arc<Mutex<RunningJob>>, name: String) -> Result<(), rlua::Error> {
+            let mut job = job_ref.lock().unwrap();
+            job.current_step.pop();
+            job.current_step.push(name);
+            Ok(())
+        }
+    }
 }
 
 struct DeclEnv<'lua, 'env> {
@@ -268,6 +293,28 @@ impl BuildEnv {
         build_functions.set("environment", build_environment).unwrap();
         let globals = lua_ctx.globals();
         globals.set("Build", build_functions).unwrap();
+
+
+        let step_start = decl_env.create_function("step_start", move |_, job_ref, name: String| {
+            lua_exports::step::start(job_ref, name)
+        })?;
+
+        let step_push = decl_env.create_function("step_push", move |_, job_ref, name: String| {
+            lua_exports::step::push(job_ref, name)
+        })?;
+
+        let step_advance = decl_env.create_function("step_advance", move |_, job_ref, name: String| {
+            lua_exports::step::advance(job_ref, name)
+        })?;
+
+        let step_functions = lua_ctx.create_table_from(
+            vec![
+                ("start", step_start),
+                ("push", step_push),
+                ("advance", step_advance),
+            ]
+        ).unwrap();
+        globals.set("Step", step_functions).unwrap();
         Ok(())
     }
 
