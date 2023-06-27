@@ -41,7 +41,7 @@ pub struct Job {
     pub id: u64,
     pub artifacts_path: Option<String>,
     pub state: sql::JobState,
-    pub run_host: String,
+    pub run_host: Option<String>,
     pub remote_id: u64,
     pub commit_id: u64,
     pub created_time: u64,
