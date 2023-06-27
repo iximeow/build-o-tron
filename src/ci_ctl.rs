@@ -151,7 +151,7 @@ fn main() {
                             "github" => {
                                 assert!(NotifierConfig::github_from_file(&full_config_file_path).is_ok());
                             }
-                            "email" => {
+                            "github-email" => {
                                 assert!(NotifierConfig::email_from_file(&full_config_file_path).is_ok());
                             }
                             other => {
@@ -187,7 +187,7 @@ fn main() {
                         "github" => {
                             NotifierConfig::github_from_file(&config_file).unwrap();
                         }
-                        "email" => {
+                        "github-email" => {
                             NotifierConfig::email_from_file(&config_file).unwrap();
                         }
                         other => {
