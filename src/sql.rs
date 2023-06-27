@@ -84,7 +84,9 @@ pub const CREATE_ARTIFACTS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS artifacts (id INTEGER PRIMARY KEY AUTOINCREMENT,
         job_id INTEGER,
         name TEXT,
-        desc TEXT);";
+        desc TEXT,
+        created_time INTEGER,
+        completed_time INTEGER);";
 
 pub const CREATE_REMOTES_INDEX: &'static str = "\
     CREATE INDEX IF NOT EXISTS 'repo_to_remote' ON remotes(repo_id);";
@@ -97,6 +99,9 @@ pub const PENDING_JOBS: &'static str = "\
 
 pub const LAST_ARTIFACTS_FOR_JOB: &'static str = "\
     select * from artifacts where job_id=?1 and (name like \"%(stderr)%\" or name like \"%(stdout)%\") order by id desc limit 2;";
+
+pub const ARTIFACT_BY_ID: &'static str = "\
+    select * from artifacts where id=?1 and job_id=?2;";
 
 pub const METRICS_FOR_JOB: &'static str = "\
     select * from metrics where job_id=?1 order by id asc;";

@@ -4,7 +4,6 @@ use rlua::prelude::*;
 
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
-use std::time::{UNIX_EPOCH, SystemTime};
 
 pub const DEFAULT_RUST_GOODFILE: &'static [u8] = include_bytes!("../../config/goodfiles/rust.lua");
 
@@ -18,7 +17,6 @@ mod lua_exports {
 
     use std::sync::{Arc, Mutex};
     use std::path::PathBuf;
-    use std::time::{UNIX_EPOCH, SystemTime};
 
     use rlua::prelude::*;
 
@@ -166,13 +164,6 @@ mod lua_exports {
         })
     }
 
-    pub fn now_ms() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("now is later than epoch")
-            .as_millis() as u64
-    }
-
     pub fn has_cmd(name: &str) -> Result<bool, rlua::Error> {
         Ok(std::process::Command::new("which")
             .arg(name)
@@ -239,7 +230,7 @@ impl BuildEnv {
             lua_exports::metric(name, value, job_ref)
         })?;
 
-        let now_ms = decl_env.create_function("now_ms", move |_, job_ref, ()| Ok(lua_exports::now_ms()))?;
+        let now_ms = decl_env.create_function("now_ms", move |_, job_ref, ()| Ok(crate::io::now_ms()))?;
 
         let artifact = decl_env.create_function("artifact", move |_, job_ref, (path, name): (String, Option<String>)| {
             lua_exports::artifact(path, name, job_ref)

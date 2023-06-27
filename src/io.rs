@@ -5,6 +5,14 @@ use std::io::Write;
 use tokio::fs::OpenOptions;
 use std::task::{Poll, Context};
 use std::pin::Pin;
+use std::time::{UNIX_EPOCH, SystemTime};
+
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("now is later than epoch")
+        .as_millis() as u64
+}
 
 pub struct ArtifactStream {
     sender: hyper::body::Sender,
@@ -51,7 +59,7 @@ impl tokio::io::AsyncWrite for ArtifactStream {
 
 pub struct ArtifactDescriptor {
     job_id: u64,
-    artifact_id: u64,
+    pub artifact_id: u64,
     file: File,
 }
 

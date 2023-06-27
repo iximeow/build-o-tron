@@ -86,7 +86,9 @@ pub struct ArtifactRecord {
     pub id: u64,
     pub job_id: u64,
     pub name: String,
-    pub desc: String
+    pub desc: String,
+    pub created_time: u64,
+    pub completed_time: Option<u64>,
 }
 
 impl DbCtx {
@@ -148,13 +150,30 @@ impl DbCtx {
         Ok(conn.last_insert_rowid() as u64)
     }
 
+    pub async fn finalize_artifact(&self, artifact_id: u64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn
+            .execute(
+                "update artifacts set completed_time=?1 where id=?2",
+                (crate::io::now_ms(), artifact_id)
+            )
+            .map(|_| ())
+            .map_err(|e| {
+                format!("{:?}", e)
+            })
+    }
+
     pub async fn reserve_artifact(&self, job_id: u64, name: &str, desc: &str) -> Result<ArtifactDescriptor, String> {
         let artifact_id = {
+            let created_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("now is before epoch")
+                .as_millis() as u64;
             let conn = self.conn.lock().unwrap();
             conn
                 .execute(
-                    "insert into artifacts (job_id, name, desc) values (?1, ?2, ?3)",
-                    (job_id, name, desc)
+                    "insert into artifacts (job_id, name, desc, created_time) values (?1, ?2, ?3, ?4)",
+                    (job_id, name, desc, created_time)
                 )
                 .map_err(|e| {
                     format!("{:?}", e)
@@ -164,6 +183,20 @@ impl DbCtx {
         };
 
         ArtifactDescriptor::new(job_id, artifact_id).await
+    }
+
+    pub fn lookup_artifact(&self, job_id: u64, artifact_id: u64) -> Result<Option<ArtifactRecord>, String> {
+        let conn = self.conn.lock().unwrap();
+        conn
+            .query_row(sql::ARTIFACT_BY_ID, [artifact_id, job_id], |row| {
+                let (id, job_id, name, desc, created_time, completed_time) = row.try_into().unwrap();
+
+                Ok(ArtifactRecord {
+                    id, job_id, name, desc, created_time, completed_time
+                })
+            })
+            .optional()
+            .map_err(|e| e.to_string())
     }
 
     pub fn commit_sha(&self, commit_id: u64) -> Result<String, String> {
@@ -321,8 +354,8 @@ impl DbCtx {
         let mut artifacts = Vec::new();
 
         while let Some(row) = result.next().unwrap() {
-            let (id, job_id, name, desc): (u64, u64, String, String) = row.try_into().unwrap();
-            artifacts.push(ArtifactRecord { id, job_id, name, desc });
+            let (id, job_id, name, desc, created_time, completed_time): (u64, u64, String, String, u64, Option<u64>) = row.try_into().unwrap();
+            artifacts.push(ArtifactRecord { id, job_id, name, desc, created_time, completed_time });
         }
 
         Ok(artifacts)

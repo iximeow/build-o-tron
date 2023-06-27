@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 lazy_static = "*"
 axum = { version = "*" }
+axum-extra = { version = "*", features = ["async-read-body"] }
 axum-server = { version = "*", features = ["tls-rustls"] }
 handlebars = "*"
 libc = "*"

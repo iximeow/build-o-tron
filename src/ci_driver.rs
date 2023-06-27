@@ -414,7 +414,11 @@ async fn handle_artifact(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
     };
 
     eprintln!("spawning task...");
-    spawn(async move { artifact.store_all(artifact_content).await.unwrap() });
+    let dbctx_ref = Arc::clone(&ctx.0);
+    spawn(async move {
+        artifact.store_all(artifact_content).await.unwrap();
+        dbctx_ref.finalize_artifact(artifact.artifact_id).await.unwrap();
+    });
     eprintln!("done?");
 
     (StatusCode::OK, "").into_response()
