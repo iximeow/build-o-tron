@@ -437,6 +437,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     let deployed = false;
 
     let head = format!("<head><title>ci.butactuallyin.space - {}</title></head>", repo_name);
+    let repo_html = format!("<a href=\"/{}\">{}</a>", &repo_name, &repo_name);
     let remote_commit_elem = format!("<a href=\"https://www.github.com/{}/commit/{}\">{}</a>", &remote_path, &sha, &sha);
     let status_elem = match state {
         JobState::Pending | JobState::Started => {
@@ -505,7 +506,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     html.push_str(&format!("  {}\n", head));
     html.push_str("  <body>\n");
     html.push_str("    <pre>\n");
-    html.push_str(&format!("repo: {}\n", repo_name));
+    html.push_str(&format!("repo: {}\n", repo_html));
     html.push_str(&format!("commit: {}\n", remote_commit_elem));
     html.push_str(&format!("status: {}\n", status_elem));
     if let Some(desc) = result_desc {
