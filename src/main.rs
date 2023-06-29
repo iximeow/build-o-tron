@@ -629,6 +629,8 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
     }
     response.push_str("</tr>\n");
 
+    let mut row_num = 0;
+
     for job in last_builds.iter().take(10) {
         let job_commit = ctx.dbctx.commit_sha(job.commit_id).expect("job has a commit");
         let commit_html = match commit_url(&job, &job_commit, &ctx.dbctx) {
@@ -687,9 +689,12 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
             row_html.push_str(&format!("<td class='row-item'>{}</td>", entry));
         }
 
-        response.push_str("<tr>");
+        let row_index = row_num % 2;
+        response.push_str(&format!("<tr class=\"{}\">", ["even-row", "odd-row"][row_index]));
         response.push_str(&row_html);
         response.push_str("</tr>\n");
+
+        row_num += 1;
     }
     response.push_str("</html>");
 
