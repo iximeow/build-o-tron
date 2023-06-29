@@ -469,7 +469,11 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     };
 
     let mut artifacts_fragment = String::new();
-    let mut artifacts = ctx.dbctx.artifacts_for_job(job.id, None).unwrap();
+    let mut artifacts = ctx.dbctx.artifacts_for_job(job.id, None).unwrap()
+        .into_iter() // HACK: filter out artifacts for previous runs of a job. artifacts should be attached to a run, runs should be distinct from jobs. but i'm sleepy.
+        .filter(|artifact| artifact.created_time >= job.start_time.unwrap_or_else(crate::io::now_ms))
+        .collect();
+
     artifacts.sort_by_key(|artifact| artifact.created_time);
 
     fn diff_times(job_completed: u64, artifact_completed: Option<u64>) -> u64 {
