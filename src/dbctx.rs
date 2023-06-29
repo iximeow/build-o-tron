@@ -384,6 +384,34 @@ impl DbCtx {
             .map(|mut jobs| jobs.pop())
     }
 
+    pub fn job_by_commit_id(&self, commit_id: u64) -> Result<Option<Job>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        conn
+            .query_row(sql::JOB_BY_COMMIT_ID, [commit_id], |row| {
+                let (id, artifacts_path, state, run_host, remote_id, commit_id, created_time, start_time, complete_time, build_token, job_timeout, source, build_result, final_text) = row.try_into().unwrap();
+                let state: u8 = state;
+                Ok(Job {
+                    id,
+                    artifacts_path,
+                    state: state.try_into().unwrap(),
+                    run_host,
+                    remote_id,
+                    commit_id,
+                    created_time,
+                    start_time,
+                    complete_time,
+                    build_token,
+                    job_timeout,
+                    source,
+                    build_result,
+                    final_text,
+                })
+            })
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
     pub fn recent_jobs_from_remote(&self, id: u64, limit: u64) -> Result<Vec<Job>, String> {
         let conn = self.conn.lock().unwrap();
 

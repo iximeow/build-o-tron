@@ -148,6 +148,37 @@ fn job_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> String {
     format!("{}/{}", &remote.remote_path, commit_sha)
 }
 
+/// render how long a job took, or is taking, in a human-friendly way
+fn display_job_time(job: &Job) -> String {
+    if let Some(start_time) = job.start_time {
+        if let Some(complete_time) = job.complete_time {
+            if complete_time < start_time {
+                if job.state == JobState::Started {
+                    // this job has been restarted. the completed time is stale.
+                    // further, this is a currently active job.
+                    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
+                    let mut duration = duration_as_human_string(now_ms - start_time);
+                    duration.push_str(" (ongoing)");
+                    duration
+                } else {
+                    "invalid data".to_string()
+                }
+            } else {
+                let duration_ms = complete_time - start_time;
+                let duration = duration_as_human_string(duration_ms);
+                duration
+            }
+        } else {
+            let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
+            let mut duration = duration_as_human_string(now_ms - start_time);
+            duration.push_str(" (ongoing)");
+            duration
+        }
+    } else {
+        "not yet run".to_owned()
+    }
+}
+
 fn parse_push_event(body: serde_json::Value) -> Result<GithubEvent, GithubHookError> {
     let body = body.as_object()
         .ok_or(GithubHookError::BodyNotObject)?;
@@ -325,33 +356,7 @@ async fn handle_ci_index(State(ctx): State<WebserverState>) -> impl IntoResponse
                 let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx.dbctx), job.id);
 
                 let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
-                let duration = if let Some(start_time) = job.start_time {
-                    if let Some(complete_time) = job.complete_time {
-                        if complete_time < start_time {
-                            if job.state == JobState::Started {
-                                // this job has been restarted. the completed time is stale.
-                                // further, this is a currently active job.
-                                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
-                                let mut duration = duration_as_human_string(now_ms - start_time);
-                                duration.push_str(" (ongoing)");
-                                duration
-                            } else {
-                                "invalid data".to_string()
-                            }
-                        } else {
-                            let duration_ms = complete_time - start_time;
-                            let duration = duration_as_human_string(duration_ms);
-                            duration
-                        }
-                    } else {
-                        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
-                        let mut duration = duration_as_human_string(now_ms - start_time);
-                        duration.push_str(" (ongoing)");
-                        duration
-                    }
-                } else {
-                    "not yet run".to_owned()
-                };
+                let duration = display_job_time(&job);
 
                 let status = format!("{:?}", job.state).to_lowercase();
 
@@ -424,13 +429,11 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         .query_row("select id, repo_id from remotes where remote_path=?1;", [&remote_path], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
         .expect("can query");
 
-    let (job_id, state, build_result, result_desc, complete_time): (u64, u8, Option<u8>, Option<String>, Option<u64>) = ctx.dbctx.conn.lock().unwrap()
-        .query_row("select id, state, build_result, final_status, complete_time from jobs where commit_id=?1;", [commit_id], |row| Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2), row.get_unwrap(3), row.get_unwrap(4))))
-        .expect("can query");
-    let complete_time = complete_time.unwrap_or_else(crate::io::now_ms);
+    let job = ctx.dbctx.job_by_commit_id(commit_id).expect("can query").expect("job exists");
 
-    let state: sql::JobState = unsafe { std::mem::transmute(state) };
-    let debug_info = state == JobState::Finished && build_result == Some(1) || state == JobState::Error;
+    let complete_time = job.complete_time.unwrap_or_else(crate::io::now_ms);
+
+    let debug_info = job.state == JobState::Finished && job.build_result == Some(1) || job.state == JobState::Error;
 
     let repo_name: String = ctx.dbctx.conn.lock().unwrap()
         .query_row("select repo_name from repos where id=?1;", [repo_id], |row| row.get(0))
@@ -441,19 +444,19 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     let head = format!("<head><title>ci.butactuallyin.space - {}</title></head>", repo_name);
     let repo_html = format!("<a href=\"/{}\">{}</a>", &repo_name, &repo_name);
     let remote_commit_elem = format!("<a href=\"https://www.github.com/{}/commit/{}\">{}</a>", &remote_path, &sha, &sha);
-    let status_elem = match state {
+    let status_elem = match job.state {
         JobState::Pending | JobState::Started => {
             "<span style='color:#660;'>pending</span>"
         },
         JobState::Finished => {
-            if let Some(build_result) = build_result {
+            if let Some(build_result) = job.build_result {
                 if build_result == 0 {
                     "<span style='color:green;'>pass</span>"
                 } else {
                     "<span style='color:red;'>failed</span>"
                 }
             } else {
-                eprintln!("job {} for commit {} is missing a build result but is reportedly finished (old data)?", job_id, commit_id);
+                eprintln!("job {} for commit {} is missing a build result but is reportedly finished (old data)?", job.id, commit_id);
                 "<span style='color:red;'>unreported</span>"
             }
         },
@@ -466,7 +469,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     };
 
     let mut artifacts_fragment = String::new();
-    let mut artifacts = ctx.dbctx.artifacts_for_job(job_id, None).unwrap();
+    let mut artifacts = ctx.dbctx.artifacts_for_job(job.id, None).unwrap();
     artifacts.sort_by_key(|artifact| artifact.created_time);
 
     fn diff_times(job_completed: u64, artifact_completed: Option<u64>) -> u64 {
@@ -502,7 +505,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         }
     }
 
-    let metrics = ctx.dbctx.metrics_for_job(job_id).unwrap();
+    let metrics = ctx.dbctx.metrics_for_job(job.id).unwrap();
     let metrics_section = if metrics.len() > 0 {
         let mut section = String::new();
         section.push_str("<div>");
@@ -525,9 +528,9 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     html.push_str("  <body>\n");
     html.push_str("    <pre>\n");
     html.push_str(&format!("repo: {}\n", repo_html));
-    html.push_str(&format!("commit: {}, job: {}\n", remote_commit_elem, job_id));
-    html.push_str(&format!("status: {}\n", status_elem));
-    if let Some(desc) = result_desc {
+    html.push_str(&format!("commit: {}, job: {}\n", remote_commit_elem, job.id));
+    html.push_str(&format!("status: {} in {}\n", status_elem, display_job_time(&job)));
+    if let Some(desc) = job.final_text.as_ref() {
         html.push_str(&format!("  description: {}\n  ", desc));
     }
     html.push_str(&format!("deployed: {}\n", deployed));
@@ -659,33 +662,7 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
         let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx.dbctx), job.id);
 
         let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
-        let duration = if let Some(start_time) = job.start_time {
-            if let Some(complete_time) = job.complete_time {
-                if complete_time < start_time {
-                    if job.state == JobState::Started {
-                        // this job has been restarted. the completed time is stale.
-                        // further, this is a currently active job.
-                        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
-                        let mut duration = duration_as_human_string(now_ms - start_time);
-                        duration.push_str(" (ongoing)");
-                        duration
-                    } else {
-                        "invalid data".to_string()
-                    }
-                } else {
-                    let duration_ms = complete_time - start_time;
-                    let duration = duration_as_human_string(duration_ms);
-                    duration
-                }
-            } else {
-                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
-                let mut duration = duration_as_human_string(now_ms - start_time);
-                duration.push_str(" (ongoing)");
-                duration
-            }
-        } else {
-            "not yet run".to_owned()
-        };
+        let duration = display_job_time(&job);
 
         let status = format!("{:?}", job.state).to_lowercase();
 
