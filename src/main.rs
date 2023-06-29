@@ -403,7 +403,7 @@ async fn handle_ci_index(State(ctx): State<WebserverState>) -> impl IntoResponse
 
     response.push_str("<h4>active jobs</h4>\n");
 
-    let jobs = ctx.dbctx.get_started_jobs().expect("can query");
+    let jobs = ctx.dbctx.get_active_jobs().expect("can query");
     if jobs.len() == 0 {
         response.push_str("<p>(none)</p>\n");
     } else {

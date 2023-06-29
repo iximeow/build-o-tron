@@ -458,10 +458,10 @@ impl DbCtx {
         Ok(jobs)
     }
 
-    pub fn get_started_jobs(&self) -> Result<Vec<Job>, String> {
+    pub fn get_active_jobs(&self) -> Result<Vec<Job>, String> {
         let conn = self.conn.lock().unwrap();
 
-        let mut started_query = conn.prepare(sql::STARTED_JOBS).unwrap();
+        let mut started_query = conn.prepare(sql::ACTIVE_JOBS).unwrap();
         let mut jobs = started_query.query([]).unwrap();
         let mut started = Vec::new();
 
