@@ -361,6 +361,20 @@ impl DbCtx {
         Ok(artifacts)
     }
 
+    pub fn repo_by_id(&self, id: u64) -> Result<Option<Repo>, String> {
+        self.conn.lock()
+            .unwrap()
+            .query_row("select * from repos where id=?1", [id], |row| {
+                let (id, repo_name) = row.try_into().unwrap();
+                Ok(Repo {
+                    id,
+                    name: repo_name,
+                })
+            })
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
     pub fn get_repos(&self) -> Result<Vec<Repo>, String> {
         let conn = self.conn.lock().unwrap();
 
@@ -442,6 +456,38 @@ impl DbCtx {
         }
 
         Ok(jobs)
+    }
+
+    pub fn get_started_jobs(&self) -> Result<Vec<Job>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut started_query = conn.prepare(sql::STARTED_JOBS).unwrap();
+        let mut jobs = started_query.query([]).unwrap();
+        let mut started = Vec::new();
+
+        while let Some(row) = jobs.next().unwrap() {
+            let (id, artifacts_path, state, run_host, remote_id, commit_id, created_time, start_time, complete_time, build_token, job_timeout, source, build_result, final_text) = row.try_into().unwrap();
+            let state: u8 = state;
+
+            started.push(Job {
+                id,
+                artifacts_path,
+                state: state.try_into().unwrap(),
+                run_host,
+                remote_id,
+                commit_id,
+                created_time,
+                start_time,
+                complete_time,
+                build_token,
+                job_timeout,
+                source,
+                build_result,
+                final_text,
+            });
+        }
+
+        Ok(started)
     }
 
     pub fn get_pending_jobs(&self) -> Result<Vec<PendingJob>, String> {

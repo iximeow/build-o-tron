@@ -401,6 +401,73 @@ async fn handle_ci_index(State(ctx): State<WebserverState>) -> impl IntoResponse
     }
     response.push_str("</table>");
 
+    response.push_str("<h4>active jobs</h4>\n");
+
+    let jobs = ctx.dbctx.get_started_jobs().expect("can query");
+    if jobs.len() == 0 {
+        response.push_str("<p>(none)</p>\n");
+    } else {
+        response.push_str("<table class='build-table'>");
+        response.push_str("<tr>\n");
+        let headings = ["repo", "last build", "job", "build commit", "duration", "status", "result"];
+        for heading in headings {
+            response.push_str(&format!("<th class='row-item'>{}</th>", heading));
+        }
+        response.push_str("</tr>\n");
+
+        let mut row_num = 0;
+
+        for job in jobs.iter() {
+            let row_index = row_num % 2;
+
+            let remote = ctx.dbctx.remote_by_id(job.remote_id).expect("query succeeds").expect("remote id is valid");
+            let repo = ctx.dbctx.repo_by_id(remote.repo_id).expect("query succeeds").expect("repo id is valid");
+
+            let repo_html = format!("<a href=\"/{}\">{}</a>", &repo.name, &repo.name);
+
+            let job_commit = ctx.dbctx.commit_sha(job.commit_id).expect("job has a commit");
+            let commit_html = match commit_url(&job, &job_commit, &ctx.dbctx) {
+                Some(url) => format!("<a href=\"{}\">{}</a>", url, &job_commit),
+                None => job_commit.clone()
+            };
+
+            let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx.dbctx), job.id);
+
+            let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
+            let duration = display_job_time(&job);
+
+            let status = format!("{:?}", job.state).to_lowercase();
+
+            let result = match job.build_result {
+                Some(0) => "<span style='color:green;'>pass</span>",
+                Some(_) => "<span style='color:red;'>fail</span>",
+                None => match job.state {
+                    JobState::Pending => { "unstarted" },
+                    JobState::Started => { "<span style='color:darkgoldenrod;'>in progress</span>" },
+                    _ => { "<span style='color:red;'>unreported</span>" }
+                }
+            };
+
+            let entries = [repo_html.as_str(), last_build_time.as_str(), job_html.as_str(), commit_html.as_str(), &duration, &status, &result];
+            let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
+
+            let mut row_html = String::new();
+            for entry in entries {
+                row_html.push_str(&format!("<td class='row-item'>{}</td>", entry));
+            }
+
+
+            response.push_str(&format!("<tr class=\"{}\">", ["even-row", "odd-row"][row_index]));
+            response.push_str(&row_html);
+            response.push_str("</tr>");
+            response.push('\n');
+
+            row_num += 1;
+        }
+
+        response.push_str("</table>\n");
+    }
+
     response.push_str("</html>");
 
     (StatusCode::OK, Html(response))
