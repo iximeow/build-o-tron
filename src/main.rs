@@ -37,7 +37,7 @@ mod dbctx;
 
 use sql::JobState;
 
-use dbctx::{DbCtx, Job};
+use dbctx::{DbCtx, Job, ArtifactRecord};
 
 use rusqlite::OptionalExtension;
 
@@ -424,11 +424,13 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         .query_row("select id, repo_id from remotes where remote_path=?1;", [&remote_path], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
         .expect("can query");
 
-    let (job_id, state, build_result, result_desc): (u64, u8, Option<u8>, Option<String>) = ctx.dbctx.conn.lock().unwrap()
-        .query_row("select id, state, build_result, final_status from jobs where commit_id=?1;", [commit_id], |row| Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2), row.get_unwrap(3))))
+    let (job_id, state, build_result, result_desc, complete_time): (u64, u8, Option<u8>, Option<String>, Option<u64>) = ctx.dbctx.conn.lock().unwrap()
+        .query_row("select id, state, build_result, final_status, complete_time from jobs where commit_id=?1;", [commit_id], |row| Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2), row.get_unwrap(3), row.get_unwrap(4))))
         .expect("can query");
+    let complete_time = complete_time.unwrap_or_else(crate::io::now_ms);
 
     let state: sql::JobState = unsafe { std::mem::transmute(state) };
+    let debug_info = state == JobState::Finished && build_result == Some(1) || state == JobState::Error;
 
     let repo_name: String = ctx.dbctx.conn.lock().unwrap()
         .query_row("select repo_name from repos where id=?1;", [repo_id], |row| row.get(0))
@@ -463,26 +465,42 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         }
     };
 
-    let output = if state == JobState::Finished && build_result == Some(1) || state == JobState::Error {
-        // collect stderr/stdout from the last artifacts, then the last 10kb of each, insert it in
-        // the page...
-        let artifacts = ctx.dbctx.artifacts_for_job(job_id).unwrap();
-        if artifacts.len() > 0 {
-            let mut streams = String::new();
-            for artifact in artifacts.iter() {
-                eprintln!("found artifact {:?} for job {:?}", artifact, job_id);
-                streams.push_str(&format!("<div>step: <pre style='display:inline;'>{}</pre></div>\n", &artifact.name));
-                streams.push_str("<pre>");
-                streams.push_str(&std::fs::read_to_string(format!("./jobs/{}/{}", artifact.job_id, artifact.id)).unwrap());
-                streams.push_str("</pre>");
-            }
-            Some(streams)
+    let mut artifacts_fragment = String::new();
+    let mut artifacts = ctx.dbctx.artifacts_for_job(job_id, None).unwrap();
+    artifacts.sort_by_key(|artifact| artifact.created_time);
+
+    fn diff_times(job_completed: u64, artifact_completed: Option<u64>) -> u64 {
+        let artifact_completed = artifact_completed.unwrap_or_else(crate::io::now_ms);
+        let job_completed = std::cmp::max(job_completed, artifact_completed);
+        job_completed - artifact_completed
+    }
+
+    let recent_artifacts: Vec<ArtifactRecord> = artifacts.iter().filter(|artifact| diff_times(complete_time, artifact.completed_time) <= 60_000).cloned().collect();
+    let old_artifacts: Vec<ArtifactRecord> = artifacts.iter().filter(|artifact| diff_times(complete_time, artifact.completed_time) > 60_000).cloned().collect();
+
+    for artifact in old_artifacts.iter() {
+        let created_time_str = Utc.timestamp_millis_opt(artifact.created_time as i64).unwrap().to_rfc2822();
+        artifacts_fragment.push_str(&format!("<div><pre style='display:inline;'>{}</pre> step: <pre style='display:inline;'>{}</pre></div>\n", created_time_str, &artifact.name));
+        let duration_str = duration_as_human_string(artifact.completed_time.unwrap_or_else(crate::io::now_ms) - artifact.created_time);
+        let size_str = (std::fs::metadata(&format!("./jobs/{}/{}", artifact.job_id, artifact.id)).expect("metadata exists").len() / 1024).to_string();
+        artifacts_fragment.push_str(&format!("<pre>  {}kb in {} </pre>\n", size_str, duration_str));
+    }
+
+    for artifact in recent_artifacts.iter() {
+        let created_time_str = Utc.timestamp_millis_opt(artifact.created_time as i64).unwrap().to_rfc2822();
+        artifacts_fragment.push_str(&format!("<div><pre style='display:inline;'>{}</pre> step: <pre style='display:inline;'>{}</pre></div>\n", created_time_str, &artifact.name));
+        if debug_info {
+            artifacts_fragment.push_str("<pre>");
+            artifacts_fragment.push_str(&std::fs::read_to_string(format!("./jobs/{}/{}", artifact.job_id, artifact.id)).unwrap());
+            artifacts_fragment.push_str("</pre>\n");
         } else {
-            None
+            let duration_str = duration_as_human_string(artifact.completed_time.unwrap_or_else(crate::io::now_ms) - artifact.created_time);
+            let size_str = std::fs::metadata(&format!("./jobs/{}/{}", artifact.job_id, artifact.id)).map(|md| {
+                (md.len() / 1024).to_string()
+            }).unwrap_or_else(|e| format!("[{}]", e));
+            artifacts_fragment.push_str(&format!("<pre>  {}kb in {} </pre>\n", size_str, duration_str));
         }
-    } else {
-        None
-    };
+    }
 
     let metrics = ctx.dbctx.metrics_for_job(job_id).unwrap();
     let metrics_section = if metrics.len() > 0 {
@@ -507,16 +525,16 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     html.push_str("  <body>\n");
     html.push_str("    <pre>\n");
     html.push_str(&format!("repo: {}\n", repo_html));
-    html.push_str(&format!("commit: {}\n", remote_commit_elem));
+    html.push_str(&format!("commit: {}, job: {}\n", remote_commit_elem, job_id));
     html.push_str(&format!("status: {}\n", status_elem));
     if let Some(desc) = result_desc {
         html.push_str(&format!("  description: {}\n  ", desc));
     }
     html.push_str(&format!("deployed: {}\n", deployed));
     html.push_str("    </pre>\n");
-    if let Some(output) = output {
-        html.push_str("    <div>last build output</div>\n");
-        html.push_str(&format!("    {}\n", output));
+    if artifacts_fragment.len() > 0 {
+        html.push_str("    <div>artifacts</div>\n");
+        html.push_str(&artifacts_fragment);
     }
     if let Some(metrics) = metrics_section {
         html.push_str(&metrics);

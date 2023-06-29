@@ -346,11 +346,11 @@ impl DbCtx {
         Ok(metrics)
     }
 
-    pub fn artifacts_for_job(&self, job: u64) -> Result<Vec<ArtifactRecord>, String> {
+    pub fn artifacts_for_job(&self, job: u64, limit: Option<u64>) -> Result<Vec<ArtifactRecord>, String> {
         let conn = self.conn.lock().unwrap();
 
         let mut artifacts_query = conn.prepare(sql::LAST_ARTIFACTS_FOR_JOB).unwrap();
-        let mut result = artifacts_query.query([job]).unwrap();
+        let mut result = artifacts_query.query([job, limit.unwrap_or(65535)]).unwrap();
         let mut artifacts = Vec::new();
 
         while let Some(row) = result.next().unwrap() {

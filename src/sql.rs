@@ -98,7 +98,7 @@ pub const PENDING_JOBS: &'static str = "\
     select id, artifacts_path, state, run_host, remote_id, commit_id, created_time, source from jobs where state=0;";
 
 pub const LAST_ARTIFACTS_FOR_JOB: &'static str = "\
-    select * from artifacts where job_id=?1 and (name like \"%(stderr)%\" or name like \"%(stdout)%\") order by id desc limit 2;";
+    select * from artifacts where job_id=?1 and (name like \"%(stderr)%\" or name like \"%(stdout)%\") order by id desc limit ?2;";
 
 pub const ARTIFACT_BY_ID: &'static str = "\
     select * from artifacts where id=?1 and job_id=?2;";
