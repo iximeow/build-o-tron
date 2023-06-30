@@ -71,6 +71,7 @@ async fn activate_job(dbctx: Arc<DbCtx>, job: &PendingJob, clients: &mut mpsc::R
     let commit_sha: String = connection
         .query_row("select sha from commits where id=?1", [job.commit_id], |row| row.get(0))
         .expect("can run query");
+    std::mem::drop(connection);
 
     let artifacts: PathBuf = match &job.artifacts {
         Some(artifacts) => PathBuf::from(artifacts),
@@ -126,11 +127,13 @@ async fn activate_job(dbctx: Arc<DbCtx>, job: &PendingJob, clients: &mut mpsc::R
 
     let run_host = client_job.client.name.clone();
 
+    let connection = dbctx.conn.lock().unwrap();
     connection.execute(
         "update jobs set started_time=?1, run_host=?2, state=1, artifacts_path=?3, build_token=?4 where id=?5",
         (now as u64, run_host, format!("{}", artifacts.display()), &client_job.client.build_token, job.id)
     )
         .expect("can update");
+    std::mem::drop(connection);
 
     spawn(async move {
         client_job.run().await
