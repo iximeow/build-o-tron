@@ -129,7 +129,7 @@ impl RunningJob {
         let (mut sender, body) = hyper::Body::channel();
         let resp = self.client.http.post("https://ci.butactuallyin.space:9876/api/artifact")
             .header("user-agent", "ci-butactuallyin-space-runner")
-            .header("x-job-token", &self.job.build_token)
+            .header("x-task-token", &self.job.build_token)
             .header("x-artifact-name", name)
             .header("x-artifact-desc", desc)
             .body(body)

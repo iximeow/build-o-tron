@@ -5,7 +5,6 @@ mod dbctx;
 mod notifier;
 mod io;
 
-use sql::JobState;
 use dbctx::DbCtx;
 use notifier::NotifierConfig;
 
@@ -82,28 +81,26 @@ fn main() {
                 JobAction::List => {
                     let db = DbCtx::new(&config_path, &db_path);
                     let mut conn = db.conn.lock().unwrap();
-                    let mut query = conn.prepare("select id, artifacts_path, state, commit_id, created_time from jobs;").unwrap();
+                    let mut query = conn.prepare(crate::sql::SELECT_ALL_RUNS_WITH_JOB_INFO).unwrap();
                     let mut jobs = query.query([]).unwrap();
                     while let Some(row) = jobs.next().unwrap() {
-                        let (id, artifacts, state, commit_id, created_time): (u64, Option<String>, u64, u64, u64) = row.try_into().unwrap();
+                        let (job_id, run_id, state, created_time, commit_id): (u64, u64, u64, u64, u64) = row.try_into().unwrap();
 
-                        eprintln!("[+] {:04} | {: >8?} | {}", id, state, created_time);
+                        eprintln!("[+] {:04} ({:04}) | {: >8?} | {} | {}", run_id, job_id, state, created_time, commit_id);
                     }
                     eprintln!("jobs");
                 },
                 JobAction::Rerun { which } => {
                     let db = DbCtx::new(&config_path, &db_path);
-                    db.conn.lock().unwrap().execute("update jobs set state=0 where id=?1", [which])
-                        .expect("works");
-                    eprintln!("[+] job {} set to pending", which);
+                    let task_id = db.new_run(which as u64).expect("db can be queried");
+                    eprintln!("[+] rerunning job {} as task {}", which, task_id);
                 }
                 JobAction::RerunCommit { commit } => {
                     let db = DbCtx::new(&config_path, &db_path);
                     let job_id = db.job_for_commit(&commit).unwrap();
                     if let Some(job_id) = job_id {
-                        db.conn.lock().unwrap().execute("update jobs set state=0 where id=?1", [job_id])
-                            .expect("works");
-                        eprintln!("[+] job {} (commit {}) set to pending", job_id, commit);
+                        let task_id = db.new_run(job_id).expect("db can be queried");
+                        eprintln!("[+] rerunning job {} (commit {}) as task {}", job_id, commit, task_id);
                     } else {
                         eprintln!("[-] no job for commit {}", commit);
                     }

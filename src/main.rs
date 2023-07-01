@@ -35,9 +35,9 @@ mod sql;
 mod notifier;
 mod dbctx;
 
-use sql::JobState;
+use sql::RunState;
 
-use dbctx::{DbCtx, Job, ArtifactRecord};
+use dbctx::{DbCtx, Job, Run, ArtifactRecord};
 
 use rusqlite::OptionalExtension;
 
@@ -148,14 +148,14 @@ fn job_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> String {
     format!("{}/{}", &remote.remote_path, commit_sha)
 }
 
-/// render how long a job took, or is taking, in a human-friendly way
-fn display_job_time(job: &Job) -> String {
-    if let Some(start_time) = job.start_time {
-        if let Some(complete_time) = job.complete_time {
+/// render how long a run took, or is taking, in a human-friendly way
+fn display_run_time(run: &Run) -> String {
+    if let Some(start_time) = run.start_time {
+        if let Some(complete_time) = run.complete_time {
             if complete_time < start_time {
-                if job.state == JobState::Started {
-                    // this job has been restarted. the completed time is stale.
-                    // further, this is a currently active job.
+                if run.state == RunState::Started {
+                    // this run has been restarted. the completed time is stale.
+                    // further, this is a currently active run.
                     let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
                     let mut duration = duration_as_human_string(now_ms - start_time);
                     duration.push_str(" (ongoing)");
@@ -332,21 +332,23 @@ async fn handle_ci_index(State(ctx): State<WebserverState>) -> impl IntoResponse
     let mut row_num = 0;
 
     for repo in repos {
-        let mut most_recent_job: Option<Job> = None;
+        let mut most_recent_run: Option<(Job, Run)> = None;
 
         for remote in ctx.dbctx.remotes_by_repo(repo.id).expect("remotes by repo works") {
             let last_job = ctx.dbctx.last_job_from_remote(remote.id).expect("job by remote works");
             if let Some(last_job) = last_job {
-                if most_recent_job.as_ref().map(|job| job.created_time < last_job.created_time).unwrap_or(true) {
-                    most_recent_job = Some(last_job);
+                if let Some(last_run) = ctx.dbctx.last_run_for_job(last_job.id).expect("can query") {
+                    if most_recent_run.as_ref().map(|run| run.1.create_time < last_run.create_time).unwrap_or(true) {
+                        most_recent_run = Some((last_job, last_run));
+                    }
                 }
             }
         }
 
         let repo_html = format!("<a href=\"/{}\">{}</a>", &repo.name, &repo.name);
 
-        let row_html: String = match most_recent_job {
-            Some(job) => {
+        let row_html: String = match most_recent_run {
+            Some((job, run)) => {
                 let job_commit = ctx.dbctx.commit_sha(job.commit_id).expect("job has a commit");
                 let commit_html = match commit_url(&job, &job_commit, &ctx.dbctx) {
                     Some(url) => format!("<a href=\"{}\">{}</a>", url, &job_commit),
@@ -355,17 +357,17 @@ async fn handle_ci_index(State(ctx): State<WebserverState>) -> impl IntoResponse
 
                 let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx.dbctx), job.id);
 
-                let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
-                let duration = display_job_time(&job);
+                let last_build_time = Utc.timestamp_millis_opt(run.create_time as i64).unwrap().to_rfc2822();
+                let duration = display_run_time(&run);
 
-                let status = format!("{:?}", job.state).to_lowercase();
+                let status = format!("{:?}", run.state).to_lowercase();
 
-                let result = match job.build_result {
+                let result = match run.build_result {
                     Some(0) => "<span style='color:green;'>pass</span>",
                     Some(_) => "<span style='color:red;'>fail</span>",
-                    None => match job.state {
-                        JobState::Pending => { "unstarted" },
-                        JobState::Started => { "<span style='color:darkgoldenrod;'>in progress</span>" },
+                    None => match run.state {
+                        RunState::Pending => { "unstarted" },
+                        RunState::Started => { "<span style='color:darkgoldenrod;'>in progress</span>" },
                         _ => { "<span style='color:red;'>unreported</span>" }
                     }
                 };
@@ -401,10 +403,10 @@ async fn handle_ci_index(State(ctx): State<WebserverState>) -> impl IntoResponse
     }
     response.push_str("</table>");
 
-    response.push_str("<h4>active jobs</h4>\n");
+    response.push_str("<h4>active tasks</h4>\n");
 
-    let jobs = ctx.dbctx.get_active_jobs().expect("can query");
-    if jobs.len() == 0 {
+    let runs = ctx.dbctx.get_active_runs().expect("can query");
+    if runs.len() == 0 {
         response.push_str("<p>(none)</p>\n");
     } else {
         response.push_str("<table class='build-table'>");
@@ -417,9 +419,10 @@ async fn handle_ci_index(State(ctx): State<WebserverState>) -> impl IntoResponse
 
         let mut row_num = 0;
 
-        for job in jobs.iter() {
+        for run in runs.iter() {
             let row_index = row_num % 2;
 
+            let job = ctx.dbctx.job_by_id(run.job_id).expect("query succeeds").expect("job id is valid");
             let remote = ctx.dbctx.remote_by_id(job.remote_id).expect("query succeeds").expect("remote id is valid");
             let repo = ctx.dbctx.repo_by_id(remote.repo_id).expect("query succeeds").expect("repo id is valid");
 
@@ -433,17 +436,17 @@ async fn handle_ci_index(State(ctx): State<WebserverState>) -> impl IntoResponse
 
             let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx.dbctx), job.id);
 
-            let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
-            let duration = display_job_time(&job);
+            let last_build_time = Utc.timestamp_millis_opt(run.create_time as i64).unwrap().to_rfc2822();
+            let duration = display_run_time(&run);
 
-            let status = format!("{:?}", job.state).to_lowercase();
+            let status = format!("{:?}", run.state).to_lowercase();
 
-            let result = match job.build_result {
+            let result = match run.build_result {
                 Some(0) => "<span style='color:green;'>pass</span>",
                 Some(_) => "<span style='color:red;'>fail</span>",
-                None => match job.state {
-                    JobState::Pending => { "unstarted" },
-                    JobState::Started => { "<span style='color:darkgoldenrod;'>in progress</span>" },
+                None => match run.state {
+                    RunState::Pending => { "unstarted" },
+                    RunState::Started => { "<span style='color:darkgoldenrod;'>in progress</span>" },
                     _ => { "<span style='color:red;'>unreported</span>" }
                 }
             };
@@ -498,9 +501,11 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
 
     let job = ctx.dbctx.job_by_commit_id(commit_id).expect("can query").expect("job exists");
 
-    let complete_time = job.complete_time.unwrap_or_else(crate::io::now_ms);
+    let run = ctx.dbctx.last_run_for_job(job.id).expect("can query").expect("run exists");
 
-    let debug_info = job.state == JobState::Finished && job.build_result == Some(1) || job.state == JobState::Error;
+    let complete_time = run.complete_time.unwrap_or_else(crate::io::now_ms);
+
+    let debug_info = run.state == RunState::Finished && run.build_result == Some(1) || run.state == RunState::Error;
 
     let repo_name: String = ctx.dbctx.conn.lock().unwrap()
         .query_row("select repo_name from repos where id=?1;", [repo_id], |row| row.get(0))
@@ -511,42 +516,42 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     let head = format!("<head><title>ci.butactuallyin.space - {}</title></head>", repo_name);
     let repo_html = format!("<a href=\"/{}\">{}</a>", &repo_name, &repo_name);
     let remote_commit_elem = format!("<a href=\"https://www.github.com/{}/commit/{}\">{}</a>", &remote_path, &sha, &sha);
-    let status_elem = match job.state {
-        JobState::Pending | JobState::Started => {
+    let status_elem = match run.state {
+        RunState::Pending | RunState::Started => {
             "<span style='color:#660;'>pending</span>"
         },
-        JobState::Finished => {
-            if let Some(build_result) = job.build_result {
+        RunState::Finished => {
+            if let Some(build_result) = run.build_result {
                 if build_result == 0 {
                     "<span style='color:green;'>pass</span>"
                 } else {
                     "<span style='color:red;'>failed</span>"
                 }
             } else {
-                eprintln!("job {} for commit {} is missing a build result but is reportedly finished (old data)?", job.id, commit_id);
+                eprintln!("run {} for commit {} is missing a build result but is reportedly finished (old data)?", run.id, commit_id);
                 "<span style='color:red;'>unreported</span>"
             }
         },
-        JobState::Error => {
+        RunState::Error => {
             "<span style='color:red;'>error</span>"
         }
-        JobState::Invalid => {
+        RunState::Invalid => {
             "<span style='color:red;'>(server error)</span>"
         }
     };
 
     let mut artifacts_fragment = String::new();
-    let mut artifacts: Vec<ArtifactRecord> = ctx.dbctx.artifacts_for_job(job.id, None).unwrap()
-        .into_iter() // HACK: filter out artifacts for previous runs of a job. artifacts should be attached to a run, runs should be distinct from jobs. but i'm sleepy.
-        .filter(|artifact| artifact.created_time >= job.start_time.unwrap_or_else(crate::io::now_ms))
+    let mut artifacts: Vec<ArtifactRecord> = ctx.dbctx.artifacts_for_run(run.id, None).unwrap()
+        .into_iter() // HACK: filter out artifacts for previous runs of a run. artifacts should be attached to a run, runs should be distinct from run. but i'm sleepy.
+        .filter(|artifact| artifact.created_time >= run.start_time.unwrap_or_else(crate::io::now_ms))
         .collect();
 
     artifacts.sort_by_key(|artifact| artifact.created_time);
 
-    fn diff_times(job_completed: u64, artifact_completed: Option<u64>) -> u64 {
+    fn diff_times(run_completed: u64, artifact_completed: Option<u64>) -> u64 {
         let artifact_completed = artifact_completed.unwrap_or_else(crate::io::now_ms);
-        let job_completed = std::cmp::max(job_completed, artifact_completed);
-        job_completed - artifact_completed
+        let run_completed = std::cmp::max(run_completed, artifact_completed);
+        run_completed - artifact_completed
     }
 
     let recent_artifacts: Vec<ArtifactRecord> = artifacts.iter().filter(|artifact| diff_times(complete_time, artifact.completed_time) <= 60_000).cloned().collect();
@@ -556,7 +561,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         let created_time_str = Utc.timestamp_millis_opt(artifact.created_time as i64).unwrap().to_rfc2822();
         artifacts_fragment.push_str(&format!("<div><pre style='display:inline;'>{}</pre> step: <pre style='display:inline;'>{}</pre></div>\n", created_time_str, &artifact.name));
         let duration_str = duration_as_human_string(artifact.completed_time.unwrap_or_else(crate::io::now_ms) - artifact.created_time);
-        let size_str = (std::fs::metadata(&format!("./jobs/{}/{}", artifact.job_id, artifact.id)).expect("metadata exists").len() / 1024).to_string();
+        let size_str = (std::fs::metadata(&format!("./artifacts/{}/{}", artifact.run_id, artifact.id)).expect("metadata exists").len() / 1024).to_string();
         artifacts_fragment.push_str(&format!("<pre>  {}kb in {} </pre>\n", size_str, duration_str));
     }
 
@@ -565,18 +570,18 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         artifacts_fragment.push_str(&format!("<div><pre style='display:inline;'>{}</pre> step: <pre style='display:inline;'>{}</pre></div>\n", created_time_str, &artifact.name));
         if debug_info {
             artifacts_fragment.push_str("<pre>");
-            artifacts_fragment.push_str(&std::fs::read_to_string(format!("./jobs/{}/{}", artifact.job_id, artifact.id)).unwrap());
+            artifacts_fragment.push_str(&std::fs::read_to_string(format!("./artifacts/{}/{}", artifact.run_id, artifact.id)).unwrap());
             artifacts_fragment.push_str("</pre>\n");
         } else {
             let duration_str = duration_as_human_string(artifact.completed_time.unwrap_or_else(crate::io::now_ms) - artifact.created_time);
-            let size_str = std::fs::metadata(&format!("./jobs/{}/{}", artifact.job_id, artifact.id)).map(|md| {
+            let size_str = std::fs::metadata(&format!("./artifacts/{}/{}", artifact.run_id, artifact.id)).map(|md| {
                 (md.len() / 1024).to_string()
             }).unwrap_or_else(|e| format!("[{}]", e));
             artifacts_fragment.push_str(&format!("<pre>  {}kb in {} </pre>\n", size_str, duration_str));
         }
     }
 
-    let metrics = ctx.dbctx.metrics_for_job(job.id).unwrap();
+    let metrics = ctx.dbctx.metrics_for_run(run.id).unwrap();
     let metrics_section = if metrics.len() > 0 {
         let mut section = String::new();
         section.push_str("<div>");
@@ -599,9 +604,9 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     html.push_str("  <body>\n");
     html.push_str("    <pre>\n");
     html.push_str(&format!("repo: {}\n", repo_html));
-    html.push_str(&format!("commit: {}, job: {}\n", remote_commit_elem, job.id));
-    html.push_str(&format!("status: {} in {}\n", status_elem, display_job_time(&job)));
-    if let Some(desc) = job.final_text.as_ref() {
+    html.push_str(&format!("commit: {}, run: {}\n", remote_commit_elem, run.id));
+    html.push_str(&format!("status: {} in {}\n", status_elem, display_run_time(&run)));
+    if let Some(desc) = run.final_text.as_ref() {
         html.push_str(&format!("  description: {}\n  ", desc));
     }
     html.push_str(&format!("deployed: {}\n", deployed));
@@ -620,11 +625,11 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
 }
 
 async fn handle_get_artifact(Path(path): Path<(String, String)>, State(ctx): State<WebserverState>) -> impl IntoResponse {
-    eprintln!("get artifact, job={}, artifact={}", path.0, path.1);
-    let job_id: u64 = path.0.parse().unwrap();
+    eprintln!("get artifact, run={}, artifact={}", path.0, path.1);
+    let run: u64 = path.0.parse().unwrap();
     let artifact_id: u64 = path.1.parse().unwrap();
 
-    let artifact_descriptor = match ctx.dbctx.lookup_artifact(job_id, artifact_id).unwrap() {
+    let artifact_descriptor = match ctx.dbctx.lookup_artifact(run, artifact_id).unwrap() {
         Some(artifact) => artifact,
         None => {
             return (StatusCode::NOT_FOUND, Html("no such artifact")).into_response();
@@ -645,7 +650,7 @@ async fn handle_get_artifact(Path(path): Path<(String, String)>, State(ctx): Sta
         let (mut tx_sender, tx_receiver) = tokio::io::duplex(65536);
         let resp_body = axum_extra::body::AsyncReadBody::new(tx_receiver);
         let mut artifact_path = ctx.jobs_path.clone();
-        artifact_path.push(artifact_descriptor.job_id.to_string());
+        artifact_path.push(artifact_descriptor.run_id.to_string());
         artifact_path.push(artifact_descriptor.id.to_string());
         spawn(async move {
             let mut artifact = artifact_descriptor;
@@ -661,7 +666,7 @@ async fn handle_get_artifact(Path(path): Path<(String, String)>, State(ctx): Sta
                         // this would be much implemented as yielding on a condvar woken when an
                         // inotify event on the file indicates a write has occurred. but i am
                         // dreadfully lazy, so we'll just uhh. busy-poll on the file? lmao.
-                        artifact = ctx.dbctx.lookup_artifact(artifact.job_id, artifact.id)
+                        artifact = ctx.dbctx.lookup_artifact(artifact.run_id, artifact.id)
                             .expect("can query db")
                             .expect("artifact still exists");
                     }
@@ -724,6 +729,7 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
     let mut row_num = 0;
 
     for job in last_builds.iter().take(10) {
+        let run = ctx.dbctx.last_run_for_job(job.id).expect("query succeeds").expect("TODO: run exists if job exists (small race if querying while creating job ....");
         let job_commit = ctx.dbctx.commit_sha(job.commit_id).expect("job has a commit");
         let commit_html = match commit_url(&job, &job_commit, &ctx.dbctx) {
             Some(url) => format!("<a href=\"{}\">{}</a>", url, &job_commit),
@@ -732,17 +738,17 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
 
         let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx.dbctx), job.id);
 
-        let last_build_time = Utc.timestamp_millis_opt(job.created_time as i64).unwrap().to_rfc2822();
-        let duration = display_job_time(&job);
+        let last_build_time = Utc.timestamp_millis_opt(run.create_time as i64).unwrap().to_rfc2822();
+        let duration = display_run_time(&run);
 
-        let status = format!("{:?}", job.state).to_lowercase();
+        let status = format!("{:?}", run.state).to_lowercase();
 
-        let result = match job.build_result {
+        let result = match run.build_result {
             Some(0) => "<span style='color:green;'>pass</span>",
             Some(_) => "<span style='color:red;'>fail</span>",
-            None => match job.state {
-                JobState::Pending => { "unstarted" },
-                JobState::Started => { "<span style='color:darkgoldenrod;'>in progress</span>" },
+            None => match run.state {
+                RunState::Pending => { "unstarted" },
+                RunState::Started => { "<span style='color:darkgoldenrod;'>in progress</span>" },
                 _ => { "<span style='color:red;'>unreported</span>" }
             }
         };
@@ -885,7 +891,7 @@ async fn make_app_server(jobs_path: PathBuf, cfg_path: &PathBuf, db_path: &PathB
         .route("/:owner/:repo/:sha", get(handle_commit_status))
         .route("/:owner", get(handle_repo_summary))
         .route("/:owner/:repo", post(handle_repo_event))
-        .route("/artifact/:job/:artifact_id", get(handle_get_artifact))
+        .route("/artifact/:b/:artifact_id", get(handle_get_artifact))
         .route("/", get(handle_ci_index))
         .fallback(fallback_get)
         .with_state(WebserverState {
