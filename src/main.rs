@@ -260,6 +260,7 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
         .expect("is str");
 
     let job_id = ctx.new_job(remote_id, &sha, Some(pusher_email)).unwrap();
+    let _ = ctx.new_run(job_id).unwrap();
 
     let notifiers = ctx.notifiers_by_repo(repo_id).expect("can get notifiers");
 
