@@ -480,6 +480,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     eprintln!("path: {}/{}, sha {}", path.0, path.1, path.2);
     let remote_path = format!("{}/{}", path.0, path.1);
     let sha = path.2;
+    let short_sha = &sha[0..9];
 
     let (commit_id, sha): (u64, String) = if sha.len() >= 7 {
         match ctx.dbctx.conn.lock().unwrap()
@@ -544,13 +545,15 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         head.push_str("\n");
         head.push_str(&format!("<meta property=\"og:type\" content=\"website\">\n"));
         head.push_str(&format!("<meta property=\"og:site_name\" content=\"ci.butactuallyin.space\">\n"));
-        head.push_str(&format!("<meta property=\"og:url\" content=\"/{}/{}/{}\"\n", &path.0, &path.1, &sha));
+        head.push_str(&format!("<meta property=\"og:url\" content=\"/{}/{}/{}\">\n", &path.0, &path.1, &sha));
+        head.push_str(&format!("<meta property=\"og:title\" contents=\"{}/{} commit {}\">", &path.0, &path.1, &short_sha));
         let build_og_description = format!("commit {} of {}/{}, {} after {}",
-            sha,
+            short_sha,
             path.0, path.1,
             status_desc,
             display_run_time(&run)
         );
+        head.push_str(&format!("<meta name=\"description\" content=\"{}\"\n>", build_og_description));
         head.push_str(&format!("<meta property=\"og:description\" content=\"{}\"\n>", build_og_description));
     }
     head.push_str("</head>\n");
