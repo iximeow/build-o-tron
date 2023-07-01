@@ -1,4 +1,5 @@
 use std::time::Duration;
+use std::os::unix::process::ExitStatusExt;
 use rlua::prelude::LuaError;
 use std::sync::{Arc, Mutex};
 use reqwest::{StatusCode, Response};
@@ -79,6 +80,12 @@ pub struct RunningJob {
     current_step: StepTracker,
 }
 
+enum RepoError {
+    CloneFailedIdk { exit_code: ExitStatus },
+    CheckoutFailedIdk { exit_code: ExitStatus },
+    CheckoutFailedMissingRef,
+}
+
 pub struct StepTracker {
     scopes: Vec<String>
 }
@@ -138,17 +145,21 @@ impl RunningJob {
         }
     }
 
-    async fn clone_remote(&self) -> Result<(), String> {
+    async fn clone_remote(&self) -> Result<(), RepoError> {
         let mut git_clone = Command::new("git");
         git_clone
             .arg("clone")
             .arg(&self.job.remote_url)
             .arg("tmpdir");
 
-        let clone_res = self.execute_command(git_clone, "git clone log", &format!("git clone {} tmpdir", &self.job.remote_url)).await?;
+        let clone_res = self.execute_command(git_clone, "git clone log", &format!("git clone {} tmpdir", &self.job.remote_url)).await
+            .map_err(|e| {
+                eprintln!("stringy error (exec failed?) for clone: {}", e);
+                RepoError::CloneFailedIdk { exit_code: ExitStatus::from_raw(0) }
+            })?;
 
         if !clone_res.success() {
-            return Err(format!("git clone failed: {:?}", clone_res));
+            return Err(RepoError::CloneFailedIdk { exit_code: clone_res });
         }
 
         let mut git_checkout = Command::new("git");
@@ -157,10 +168,18 @@ impl RunningJob {
             .arg("checkout")
             .arg(&self.job.commit);
 
-        let checkout_res = self.execute_command(git_checkout, "git checkout log", &format!("git checkout {}", &self.job.commit)).await?;
+        let checkout_res = self.execute_command(git_checkout, "git checkout log", &format!("git checkout {}", &self.job.commit)).await
+            .map_err(|e| {
+                eprintln!("stringy error (exec failed?) for checkout: {}", e);
+                RepoError::CheckoutFailedIdk { exit_code: ExitStatus::from_raw(0) }
+            })?;
 
         if !checkout_res.success() {
-            return Err(format!("git checkout failed: {:?}", checkout_res));
+            if checkout_res.code() == Some(128) {
+                return Err(RepoError::CheckoutFailedIdk { exit_code: checkout_res });
+            } else {
+                return Err(RepoError::CheckoutFailedMissingRef);
+            }
         }
 
         Ok(())
@@ -212,9 +231,26 @@ impl RunningJob {
         std::fs::remove_dir_all("tmpdir").unwrap();
         std::fs::create_dir("tmpdir").unwrap();
 
-        self.clone_remote().await.expect("clone succeeds");
-        
         let ctx = Arc::new(Mutex::new(self));
+
+        let checkout_res = ctx.lock().unwrap().clone_remote().await;
+
+        if let Err(e) = checkout_res {
+            let status = "bad_ref";
+            let status = serde_json::json!({
+                "kind": "job_status",
+                "state": "finished",
+                "result": status,
+            });
+            eprintln!("checkout failed, reporting status: {}", status);
+
+            let res = ctx.lock().unwrap().client.send(status).await;
+            if let Err(e) = res {
+                eprintln!("[!] FAILED TO REPORT JOB STATUS ({}): {:?}", "success", e);
+            }
+
+            return;
+        }
 
         let lua_env = JobEnv::new(&ctx);
 
