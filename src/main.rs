@@ -505,6 +505,29 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
 
     let complete_time = run.complete_time.unwrap_or_else(crate::io::now_ms);
 
+    let (status_elem, status_desc) = match run.state {
+        RunState::Pending | RunState::Started => {
+            ("<span style='color:#660;'>pending</span>", "⌛in progress")
+        },
+        RunState::Finished => {
+            if let Some(build_result) = run.build_result {
+                if build_result == 0 {
+                    ("<span style='color:green;'>pass</span>", "✅ passed")
+                } else {
+                    ("<span style='color:red;'>failed</span>", "❌ failed")
+                }
+            } else {
+                eprintln!("run {} for commit {} is missing a build result but is reportedly finished (old data)?", run.id, commit_id);
+                ("<span style='color:red;'>unreported</span>", "❔ missing status")
+            }
+        },
+        RunState::Error => {
+            ("<span style='color:red;'>error</span>", "🧯 error, uncompleted")
+        }
+        RunState::Invalid => {
+            ("<span style='color:red;'>(server error)</span>", "dude even i don't know")
+        }
+    };
     let debug_info = run.state == RunState::Finished && run.build_result == Some(1) || run.state == RunState::Error;
 
     let repo_name: String = ctx.dbctx.conn.lock().unwrap()
@@ -513,32 +536,26 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
 
     let deployed = false;
 
-    let head = format!("<head><title>ci.butactuallyin.space - {}</title></head>", repo_name);
+    let mut head = String::new();
+    head.push_str("<head>");
+    head.push_str(&format!("<title>ci.butactuallyin.space - {}</title>", repo_name));
+    let include_og_tags = true;
+    if include_og_tags {
+        head.push_str("\n");
+        head.push_str(&format!("<meta property=\"og:type\" content=\"website\">\n"));
+        head.push_str(&format!("<meta property=\"og:site_name\" content=\"ci.butactuallyin.space\">\n"));
+        head.push_str(&format!("<meta property=\"og:url\" content=\"/{}/{}/{}\"\n", &path.0, &path.1, &sha));
+        let build_og_description = format!("commit {} of {}/{}, {} after {}",
+            sha,
+            path.0, path.1,
+            status_desc,
+            display_run_time(&run)
+        );
+        head.push_str(&format!("<meta property=\"og:description\" content=\"{}\"\n>", build_og_description));
+    }
+    head.push_str("</head>\n");
     let repo_html = format!("<a href=\"/{}\">{}</a>", &repo_name, &repo_name);
     let remote_commit_elem = format!("<a href=\"https://www.github.com/{}/commit/{}\">{}</a>", &remote_path, &sha, &sha);
-    let status_elem = match run.state {
-        RunState::Pending | RunState::Started => {
-            "<span style='color:#660;'>pending</span>"
-        },
-        RunState::Finished => {
-            if let Some(build_result) = run.build_result {
-                if build_result == 0 {
-                    "<span style='color:green;'>pass</span>"
-                } else {
-                    "<span style='color:red;'>failed</span>"
-                }
-            } else {
-                eprintln!("run {} for commit {} is missing a build result but is reportedly finished (old data)?", run.id, commit_id);
-                "<span style='color:red;'>unreported</span>"
-            }
-        },
-        RunState::Error => {
-            "<span style='color:red;'>error</span>"
-        }
-        RunState::Invalid => {
-            "<span style='color:red;'>(server error)</span>"
-        }
-    };
 
     let mut artifacts_fragment = String::new();
     let mut artifacts: Vec<ArtifactRecord> = ctx.dbctx.artifacts_for_run(run.id, None).unwrap()
