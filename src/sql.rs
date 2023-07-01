@@ -122,7 +122,7 @@ pub const CREATE_REPO_NAME_INDEX: &'static str = "\
     CREATE UNIQUE INDEX IF NOT EXISTS 'repo_names' ON repos(repo_name);";
 
 pub const PENDING_RUNS: &'static str = "\
-    select id, job_id, artifacts_path, state, run_host, created_time from runs where state=0;";
+    select id, job_id, created_time from runs where state=0;";
 
 pub const ACTIVE_RUNS: &'static str = "\
     select id,

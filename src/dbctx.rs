@@ -513,7 +513,12 @@ impl DbCtx {
         let mut pending = Vec::new();
 
         while let Some(row) = runs.next().unwrap() {
-            let run = crate::sql::row2run(row).into_pending_run();
+            let (id, job_id, create_time) = row.try_into().unwrap();
+            let run = PendingRun {
+                id,
+                job_id,
+                create_time,
+            };
             pending.push(run);
         }
 
