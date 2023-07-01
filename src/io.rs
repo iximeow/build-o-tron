@@ -66,7 +66,7 @@ pub struct ArtifactDescriptor {
 impl ArtifactDescriptor {
     pub async fn new(job_id: u64, artifact_id: u64) -> Result<Self, String> {
         // TODO: jobs should be a configurable path
-        let path = format!("jobs/{}/{}", job_id, artifact_id);
+        let path = format!("artifacts/{}/{}", job_id, artifact_id);
         let file = OpenOptions::new()
             .read(true)
             .write(true)
