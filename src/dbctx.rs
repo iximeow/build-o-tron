@@ -353,7 +353,7 @@ impl DbCtx {
         let conn = self.conn.lock().unwrap();
 
         let rows_modified = conn.execute(
-            "insert into jobs (remote_id, commit_id, created_time, source) values (?1, ?2, ?3, ?4, ?5);",
+            "insert into jobs (remote_id, commit_id, created_time, source) values (?1, ?2, ?3, ?4);",
             (remote_id, commit_id, created_time, pusher)
         ).unwrap();
 
