@@ -100,8 +100,8 @@ async fn activate_run(dbctx: Arc<DbCtx>, run: &PendingRun, clients: &mut mpsc::R
 
     let connection = dbctx.conn.lock().unwrap();
     connection.execute(
-        "update jobs set started_time=?1, run_host=?2, state=1, artifacts_path=?3, build_token=?4 where id=?5",
-        (now as u64, run_host, format!("{}", artifacts.display()), &client_job.client.build_token, job.id)
+        "update runs set started_time=?1, run_host=?2, state=1, artifacts_path=?3, build_token=?4 where id=?5",
+        (now as u64, run_host, format!("{}", artifacts.display()), &client_job.client.build_token, run.id)
     )
         .expect("can update");
     std::mem::drop(connection);
