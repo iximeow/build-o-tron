@@ -238,7 +238,7 @@ impl RunningJob {
         if let Err(e) = checkout_res {
             let status = "bad_ref";
             let status = serde_json::json!({
-                "kind": "job_status",
+                "kind": "task_status",
                 "state": "finished",
                 "result": status,
             });
@@ -286,7 +286,7 @@ impl RunningJob {
             Ok(status) => {
                 eprintln!("[+] job success!");
                 let status = serde_json::json!({
-                    "kind": "job_status",
+                    "kind": "task_status",
                     "state": "finished",
                     "result": status
                 });
@@ -301,7 +301,7 @@ impl RunningJob {
                 eprintln!("[-] job error: {}", status);
 
                 let res = ctx.lock().unwrap().client.send(serde_json::json!({
-                    "kind": "job_status",
+                    "kind": "task_status",
                     "state": "interrupted",
                     "result": status,
                     "desc": lua_err.to_string(),
