@@ -73,6 +73,7 @@ impl TaskInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HostInfo {
+    pub hostname: String,
     pub cpu_info: CpuInfo,
     pub memory_info: MemoryInfo,
     pub env_info: EnvInfo,
@@ -80,9 +81,12 @@ pub struct HostInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CpuInfo {
-    pub model: String,
+    pub model_name: String,
     pub microcode: String,
     pub cores: u32,
+    pub vendor_id: String,
+    pub family: String,
+    pub model: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

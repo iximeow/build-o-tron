@@ -34,6 +34,7 @@ mod io;
 mod sql;
 mod notifier;
 mod dbctx;
+mod protocol;
 
 use sql::RunState;
 

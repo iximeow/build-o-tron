@@ -56,7 +56,7 @@ pub struct Run {
     pub job_id: u64,
     pub artifacts_path: Option<String>,
     pub state: sql::RunState,
-    pub run_host: Option<String>,
+    pub host_id: Option<u64>,
     pub create_time: u64,
     pub start_time: Option<u64>,
     pub complete_time: Option<u64>,
@@ -126,6 +126,8 @@ impl DbCtx {
         conn.execute(sql::CREATE_REPO_NAME_INDEX, ()).unwrap();
         conn.execute(sql::CREATE_REMOTES_TABLE, ()).unwrap();
         conn.execute(sql::CREATE_REMOTES_INDEX, ()).unwrap();
+        conn.execute(sql::CREATE_RUNS_TABLE, ()).unwrap();
+        conn.execute(sql::CREATE_HOSTS_TABLE, ()).unwrap();
 
         Ok(())
     }
@@ -549,6 +551,95 @@ impl DbCtx {
         }
 
         Ok(remotes)
+    }
+
+    /// try to find a host close to `host_info`, but maybe not an exact match.
+    ///
+    /// specifically, we'll ignore microcode and family/os - enough that measurements ought to be
+    /// comparable but maybe not perfectly so.
+    pub fn find_id_like_host(&self, host_info: &crate::protocol::HostInfo) -> Result<Option<u32>, String> {
+        self.conn.lock()
+            .unwrap()
+            .query_row(
+                "select id from hosts where \
+                 ( \
+                    hostname=?1, cpu_vendor=?2, cpu_model_name=?3, cpu_family=?4, \
+                    cpu_model=?5, cpu_cores=?6, mem_total=?7, \
+                    arch=?10 \
+                 );",
+                (
+                    &host_info.hostname,
+                    &host_info.cpu_info.vendor_id,
+                    &host_info.cpu_info.model_name,
+                    &host_info.cpu_info.family,
+                    &host_info.cpu_info.model,
+                    &host_info.cpu_info.cores,
+                    &host_info.memory_info.total,
+                    &host_info.env_info.arch,
+                ),
+                |row| { row.get(0) }
+            )
+            .map_err(|e| e.to_string())
+    }
+
+    /// get an id for the host described by `host_info`. this may create a new record if no such
+    /// host exists.
+    pub fn id_for_host(&self, host_info: &crate::protocol::HostInfo) -> Result<u32, String> {
+        let conn = self.conn.lock().unwrap();
+
+        conn
+            .execute(
+                "insert or ignore into hosts \
+                 (\
+                     hostname, cpu_vendor_id, cpu_model_name, cpu_family, \
+                     cpu_model, cpu_microcode, cpu_cores, mem_total, \
+                     arch, family, os\
+                 ) values (\
+                     ?1, ?2, ?3, ?4, \
+                     ?5, ?6, ?7, ?8, \
+                     ?9, ?10, ?11 \
+                 );",
+                (
+                    &host_info.hostname,
+                    &host_info.cpu_info.vendor_id,
+                    &host_info.cpu_info.model_name,
+                    &host_info.cpu_info.family,
+                    &host_info.cpu_info.model,
+                    &host_info.cpu_info.microcode,
+                    &host_info.cpu_info.cores,
+                    &host_info.memory_info.total,
+                    &host_info.env_info.arch,
+                    &host_info.env_info.family,
+                    &host_info.env_info.os,
+                )
+            )
+            .expect("can insert");
+
+        self.conn.lock()
+            .unwrap()
+            .query_row(
+                "select id from hosts where \
+                 ( \
+                    hostname=?1, cpu_vendor=?2, cpu_model_name=?3, cpu_family=?4, \
+                    cpu_model=?5, cpu_microcode=?6, cpu_cores=?7, mem_total=?8, \
+                    arch=?9, family=?10, os=?11 \
+                 );",
+                (
+                    &host_info.hostname,
+                    &host_info.cpu_info.vendor_id,
+                    &host_info.cpu_info.model_name,
+                    &host_info.cpu_info.family,
+                    &host_info.cpu_info.model,
+                    &host_info.cpu_info.microcode,
+                    &host_info.cpu_info.cores,
+                    &host_info.memory_info.total,
+                    &host_info.env_info.arch,
+                    &host_info.env_info.family,
+                    &host_info.env_info.os,
+                ),
+                |row| { row.get(0) }
+            )
+            .map_err(|e| e.to_string())
     }
 
     pub fn last_run_for_job(&self, job_id: u64) -> Result<Option<Run>, String> {

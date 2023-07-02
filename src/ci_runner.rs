@@ -498,11 +498,14 @@ mod host_info {
     fn collect_cpu_info() -> CpuInfo {
         let cpu_lines: Vec<String> = std::fs::read_to_string("/proc/cpuinfo").unwrap().split("\n").map(|line| line.to_string()).collect();
         let model_names: Vec<&String> = cpu_lines.iter().filter(|line| line.starts_with("model name")).collect();
-        let model = model_names.first().expect("can get model name").to_string().split(":").last().unwrap().trim().to_string();
+        let model_name = model_names.first().expect("can get model name").to_string().split(":").last().unwrap().trim().to_string();
         let cores = model_names.len() as u32;
+        let vendor_id = cpu_lines.iter().find(|line| line.starts_with("vendor_id")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
+        let family = cpu_lines.iter().find(|line| line.starts_with("vendor_id")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
+        let model = cpu_lines.iter().find(|line| line.starts_with("model\t")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
         let microcode = cpu_lines.iter().find(|line| line.starts_with("microcode")).expect("microcode line is present").split(":").last().unwrap().trim().to_string();
 
-        CpuInfo { model, microcode, cores }
+        CpuInfo { model_name, microcode, cores, vendor_id, family, model }
     }
 
     fn collect_mem_info() -> MemoryInfo {
@@ -536,10 +539,11 @@ mod host_info {
     pub fn collect_host_info() -> HostInfo {
         let cpu_info = collect_cpu_info();
         let memory_info = collect_mem_info();
-//        let hostname = hostname();
+        let hostname = hostname();
         let env_info = collect_env_info();
 
         HostInfo {
+            hostname,
             cpu_info,
             memory_info,
             env_info,

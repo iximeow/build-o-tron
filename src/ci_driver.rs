@@ -109,12 +109,12 @@ async fn activate_run(dbctx: Arc<DbCtx>, run: &PendingRun, clients: &mut mpsc::R
         }
     };
 
-    let run_host = client_job.client.name.clone();
+    let host_id = client_job.client.host_id;
 
     let connection = dbctx.conn.lock().unwrap();
     connection.execute(
-        "update runs set started_time=?1, run_host=?2, state=1, artifacts_path=?3, build_token=?4 where id=?5",
-        (now as u64, run_host, format!("{}", artifacts.display()), &client_job.client.build_token, run.id)
+        "update runs set started_time=?1, host_id=?2, state=1, artifacts_path=?3, build_token=?4 where id=?5",
+        (now as u64, host_id, format!("{}", artifacts.display()), &client_job.client.build_token, run.id)
     )
         .expect("can update");
     std::mem::drop(connection);
@@ -129,13 +129,9 @@ async fn activate_run(dbctx: Arc<DbCtx>, run: &PendingRun, clients: &mut mpsc::R
 struct RunnerClient {
     tx: mpsc::Sender<Result<String, String>>,
     rx: BodyStream,
-    name: String,
+    host_id: u32,
     build_token: String,
     accepted_sources: Option<Vec<String>>,
-}
-
-fn random_name() -> String {
-    "random name".to_string()
 }
 
 fn token_for_job() -> String {
@@ -250,13 +246,12 @@ impl ClientJob {
 }
 
 impl RunnerClient {
-    async fn new(sender: mpsc::Sender<Result<String, String>>, resp: BodyStream, accepted_sources: Option<Vec<String>>) -> Result<Self, String> {
-        let name = random_name();
+    async fn new(sender: mpsc::Sender<Result<String, String>>, resp: BodyStream, accepted_sources: Option<Vec<String>>, host_id: u32) -> Result<Self, String> {
         let token = token_for_job();
         let client = RunnerClient {
             tx: sender,
             rx: resp,
-            name,
+            host_id,
             build_token: token,
             accepted_sources,
         };
@@ -455,7 +450,9 @@ async fn handle_next_job(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
 
     eprintln!("client identifies itself as {:?}", host_info);
 
-    let client = match RunnerClient::new(tx_sender, job_resp, accepted_pushers).await {
+    let host_info_id = ctx.0.id_for_host(&host_info).expect("can get a host info id");
+
+    let client = match RunnerClient::new(tx_sender, job_resp, accepted_pushers, host_info_id).await {
         Ok(v) => v,
         Err(e) => {
             eprintln!("unable to register client");

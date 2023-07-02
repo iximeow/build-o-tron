@@ -4,6 +4,7 @@ mod sql;
 mod dbctx;
 mod notifier;
 mod io;
+mod protocol;
 
 use dbctx::DbCtx;
 use notifier::NotifierConfig;

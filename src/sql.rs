@@ -36,14 +36,14 @@ impl TryFrom<u8> for RunState {
 }
 
 pub(crate) fn row2run(row: &rusqlite::Row) -> Run {
-    let (id, job_id, artifacts_path, state, run_host, build_token, create_time, start_time, complete_time, run_timeout, build_result, final_text) = row.try_into().unwrap();
+    let (id, job_id, artifacts_path, state, host_id, build_token, create_time, start_time, complete_time, run_timeout, build_result, final_text) = row.try_into().unwrap();
     let state: u8 = state;
     Run {
         id,
         job_id,
         artifacts_path,
         state: state.try_into().unwrap(),
-        run_host,
+        host_id,
         create_time,
         start_time,
         complete_time,
@@ -101,12 +101,12 @@ pub const CREATE_ARTIFACTS_TABLE: &'static str = "\
         created_time INTEGER,
         completed_time INTEGER);";
 
-pub const CREATE_RUN_TABLE: &'static str = "\
+pub const CREATE_RUNS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT,
         job_id INTEGER,
         artifacts_path TEXT,
         state INTEGER NOT NULL,
-        run_host TEXT,
+        host_id INTEGER,
         build_token TEXT,
         created_time INTEGER,
         started_time INTEGER,
@@ -114,6 +114,21 @@ pub const CREATE_RUN_TABLE: &'static str = "\
         run_timeout INTEGER,
         build_result INTEGER,
         final_status TEXT);";
+
+pub const CREATE_HOSTS_TABLE: &'static str = "\
+    CREATE TABLE IF NOT EXISTS hosts (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        hostname TEXT,
+        cpu_vendor TEXT,
+        cpu_model_name TEXT,
+        cpu_family TEXT,
+        cpu_model TEXT,
+        cpu_microcode TEXT,
+        cpu_cores INTEGER,
+        mem_total TEXT,
+        arch TEXT,
+        family TEXT,
+        os TEXT,
+        UNIQUE(hostname, cpu_vendor, cpu_model_name, cpu_family, cpu_model, cpu_microcode, cpu_cores, mem_total, arch, family, os));";
 
 pub const CREATE_REMOTES_INDEX: &'static str = "\
     CREATE INDEX IF NOT EXISTS 'repo_to_remote' ON remotes(repo_id);";
@@ -129,7 +144,7 @@ pub const ACTIVE_RUNS: &'static str = "\
         job_id,
         artifacts_path,
         state,
-        run_host,
+        host_id,
         build_token,
         created_time,
         started_time,
@@ -170,7 +185,7 @@ pub const LAST_RUN_FOR_JOB: &'static str = "\
         job_id,
         artifacts_path,
         state,
-        run_host,
+        host_id,
         build_token,
         created_time,
         started_time,
