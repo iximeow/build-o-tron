@@ -118,7 +118,7 @@ pub const CREATE_RUNS_TABLE: &'static str = "\
 pub const CREATE_HOSTS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS hosts (id INTEGER PRIMARY KEY AUTOINCREMENT,
         hostname TEXT,
-        cpu_vendor TEXT,
+        cpu_vendor_id TEXT,
         cpu_model_name TEXT,
         cpu_family TEXT,
         cpu_model TEXT,
@@ -128,7 +128,7 @@ pub const CREATE_HOSTS_TABLE: &'static str = "\
         arch TEXT,
         family TEXT,
         os TEXT,
-        UNIQUE(hostname, cpu_vendor, cpu_model_name, cpu_family, cpu_model, cpu_microcode, cpu_cores, mem_total, arch, family, os));";
+        UNIQUE(hostname, cpu_vendor_id, cpu_model_name, cpu_family, cpu_model, cpu_microcode, cpu_cores, mem_total, arch, family, os));";
 
 pub const CREATE_REMOTES_INDEX: &'static str = "\
     CREATE INDEX IF NOT EXISTS 'repo_to_remote' ON remotes(repo_id);";

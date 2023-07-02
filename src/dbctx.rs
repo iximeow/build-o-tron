@@ -615,8 +615,7 @@ impl DbCtx {
             )
             .expect("can insert");
 
-        self.conn.lock()
-            .unwrap()
+        conn
             .query_row(
                 "select id from hosts where \
                  ( \
