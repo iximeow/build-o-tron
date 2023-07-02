@@ -14,7 +14,7 @@ pub enum ClientProto {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "kind")]
+#[serde(tag = "command_info")]
 #[serde(rename_all = "snake_case")]
 pub enum CommandInfo {
     Started { command: Vec<String>, cwd: Option<String>, id: u32 },
@@ -22,7 +22,7 @@ pub enum CommandInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "kind")]
+#[serde(tag = "task_info")]
 #[serde(rename_all = "snake_case")]
 pub enum TaskInfo {
     Finished { status: String },
