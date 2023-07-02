@@ -177,7 +177,7 @@ pub const LAST_RUN_FOR_JOB: &'static str = "\
         complete_time,
         run_timeout,
         build_result,
-        final_status from runs where job_id=?1;";
+        final_status from runs where job_id=?1 order by started_time desc limit 1;";
 
 pub const SELECT_ALL_RUNS_WITH_JOB_INFO: &'static str = "\
     select jobs.id as job_id, runs.id as run_id, runs.state, runs.created_time, jobs.commit_id
