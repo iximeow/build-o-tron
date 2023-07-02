@@ -432,19 +432,24 @@ async fn handle_next_job(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
 
     let request = job_resp.next().await.expect("request chunk").expect("chunk exists");
     let request = std::str::from_utf8(&request).unwrap();
-    let request: WorkRequest = match serde_json::from_str(&request) {
+    let request: ClientProto = match serde_json::from_str(&request) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("couldn't parse work request: {:?}", e);
             return (StatusCode::MISDIRECTED_REQUEST, resp_body).into_response();
         }
     };
-    if &request.kind != "new_job_please" {
-        eprintln!("bad request kind: {:?}", &request.kind);
-        return (StatusCode::MISDIRECTED_REQUEST, resp_body).into_response();
-    }
+    let (accepted_pushers, host_info) = match request {
+        ClientProto::NewTaskPlease { allowed_pushers, host_info } => (allowed_pushers, host_info),
+        other => {
+            eprintln!("bad request kind: {:?}", &other);
+            return (StatusCode::MISDIRECTED_REQUEST, resp_body).into_response();
+        }
+    };
 
-    let client = match RunnerClient::new(tx_sender, job_resp, request.accepted_pushers).await {
+    eprintln!("client identifies itself as {:?}", host_info);
+
+    let client = match RunnerClient::new(tx_sender, job_resp, accepted_pushers).await {
         Ok(v) => v,
         Err(e) => {
             eprintln!("unable to register client");
