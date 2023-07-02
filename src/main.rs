@@ -44,8 +44,6 @@ use rusqlite::OptionalExtension;
 #[derive(Serialize, Deserialize)]
 struct WebserverConfig {
     psks: Vec<GithubPsk>,
-    cert_path: PathBuf,
-    key_path: PathBuf,
     jobs_path: PathBuf,
     config_path: PathBuf,
     db_path: PathBuf,
