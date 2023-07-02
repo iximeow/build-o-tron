@@ -428,29 +428,37 @@ impl RunnerClient {
     }
 }
 
+#[derive(Deserialize, Serialize)]
+struct RunnerConfig {
+    server_address: String,
+    auth_secret: String,
+    allowed_pushers: Option<Vec<String>>,
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    let secret = std::fs::read_to_string("./auth_secret").unwrap();
+    let mut args = std::env::args();
+    args.next().expect("first arg exists");
+    let config_path = args.next().unwrap_or("./runner_config.json".to_string());
+    let runner_config: RunnerConfig = serde_json::from_reader(std::fs::File::open(config_path).expect("file exists and is accessible")).expect("valid json for RunnerConfig");
     let client = reqwest::ClientBuilder::new()
         .connect_timeout(Duration::from_millis(1000))
         .timeout(Duration::from_millis(600000))
         .build()
         .expect("can build client");
 
-    let allowed_pushers: Option<Vec<String>> = None;
-
     loop {
         let (mut sender, body) = hyper::Body::channel();
 
         sender.send_data(serde_json::to_string(&json!({
             "kind": "new_job_please",
-            "accepted_pushers": &["git@iximeow.net", "me@iximeow.net"],
+            "accepted_pushers": &runner_config.allowed_pushers,
         })).unwrap().into()).await.expect("req");
 
         let poll = client.post("https://ci.butactuallyin.space:9876/api/next_job")
             .header("user-agent", "ci-butactuallyin-space-runner")
-            .header("authorization", secret.trim())
+            .header("authorization", runner_config.auth_secret.trim())
             .body(body)
             .send()
             .await;
@@ -465,7 +473,7 @@ async fn main() {
                         continue;
                     }
                 };
-                let job = match client.wait_for_work(allowed_pushers.as_ref().map(|x| x.as_ref())).await {
+                let job = match client.wait_for_work(runner_config.allowed_pushers.as_ref().map(|x| x.as_ref())).await {
                     Ok(Some(request)) => request,
                     Ok(None) => {
                         eprintln!("no work to do (yet)");

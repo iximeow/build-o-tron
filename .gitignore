@@ -6,3 +6,4 @@ state.db
 auth_secret
 driver_config.json
 webserver_config.json
+runner_config.json
