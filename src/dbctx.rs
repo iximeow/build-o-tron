@@ -563,8 +563,8 @@ impl DbCtx {
             .query_row(
                 "select id from hosts where \
                  ( \
-                    hostname=?1, cpu_vendor_id=?2, cpu_model_name=?3, cpu_family=?4, \
-                    cpu_model=?5, cpu_cores=?6, mem_total=?7, \
+                    hostname=?1 and cpu_vendor_id=?2 and cpu_model_name=?3 and cpu_family=?4 and \
+                    cpu_model=?5 and cpu_cores=?6 and mem_total=?7 and \
                     arch=?10 \
                  );",
                 (
@@ -618,10 +618,9 @@ impl DbCtx {
         conn
             .query_row(
                 "select id from hosts where \
-                 ( \
-                    hostname=?1, cpu_vendor_id=?2, cpu_model_name=?3, cpu_family=?4, \
-                    cpu_model=?5, cpu_microcode=?6, cpu_cores=?7, mem_total=?8, \
-                    arch=?9, family=?10, os=?11 \
+                    hostname=?1 and cpu_vendor_id=?2 and cpu_model_name=?3 and cpu_family=?4 and \
+                    cpu_model=?5 and cpu_microcode=?6 and cpu_cores=?7 and mem_total=?8 and \
+                    arch=?9 and family=?10 and os=?11 \
                  );",
                 (
                     &host_info.hostname,
