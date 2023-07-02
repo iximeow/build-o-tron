@@ -13,10 +13,12 @@ use std::task::{Context, Poll};
 use std::pin::Pin;
 use std::marker::Unpin;
 
+mod protocol;
 mod lua;
 mod io;
 
 use crate::io::ArtifactStream;
+use crate::protocol::{ClientProto, CommandInfo, TaskInfo, RequestedJob};
 
 #[derive(Debug)]
 enum WorkAcquireError {
@@ -31,13 +33,6 @@ struct RunnerClient {
     tx: hyper::body::Sender,
     rx: Response,
     current_job: Option<RequestedJob>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct RequestedJob {
-    commit: String,
-    remote_url: String,
-    build_token: String,
 }
 
 impl RequestedJob {
@@ -116,11 +111,8 @@ impl StepTracker {
 
 impl RunningJob {
     async fn send_metric(&mut self, name: &str, value: String) -> Result<(), String> {
-        self.client.send(serde_json::json!({
-            "kind": "metric",
-            "name": name,
-            "value": value,
-        })).await
+        self.client.send_typed(&ClientProto::metric(name, value))
+            .await
             .map_err(|e| format!("failed to send metric {}: {:?})", name, e))
     }
 
@@ -224,9 +216,7 @@ impl RunningJob {
     }
 
     async fn run(mut self) {
-        self.client.send(serde_json::json!({
-            "status": "started"
-        })).await.unwrap();
+        self.client.send_typed(&ClientProto::Started).await.unwrap();
 
         std::fs::remove_dir_all("tmpdir").unwrap();
         std::fs::create_dir("tmpdir").unwrap();
@@ -237,14 +227,10 @@ impl RunningJob {
 
         if let Err(e) = checkout_res {
             let status = "bad_ref";
-            let status = serde_json::json!({
-                "kind": "task_status",
-                "state": "finished",
-                "result": status,
-            });
-            eprintln!("checkout failed, reporting status: {}", status);
+            let status = ClientProto::task_status(TaskInfo::finished(status));
+            eprintln!("checkout failed, reporting status: {:?}", status);
 
-            let res = ctx.lock().unwrap().client.send(status).await;
+            let res = ctx.lock().unwrap().client.send_typed(&status).await;
             if let Err(e) = res {
                 eprintln!("[!] FAILED TO REPORT JOB STATUS ({}): {:?}", "success", e);
             }
@@ -285,14 +271,10 @@ impl RunningJob {
         match res {
             Ok(status) => {
                 eprintln!("[+] job success!");
-                let status = serde_json::json!({
-                    "kind": "task_status",
-                    "state": "finished",
-                    "result": status
-                });
-                eprintln!("reporting status: {}", status);
+                let status = ClientProto::task_status(TaskInfo::finished(status));
+                eprintln!("reporting status: {:?}", status);
 
-                let res = ctx.lock().unwrap().client.send(status).await;
+                let res = ctx.lock().unwrap().client.send_typed(&status).await;
                 if let Err(e) = res {
                     eprintln!("[!] FAILED TO REPORT JOB STATUS ({}): {:?}", "success", e);
                 }
@@ -300,27 +282,18 @@ impl RunningJob {
             Err((status, lua_err)) => {
                 eprintln!("[-] job error: {}", status);
 
-                let res = ctx.lock().unwrap().client.send(serde_json::json!({
-                    "kind": "task_status",
-                    "state": "interrupted",
-                    "result": status,
-                    "desc": lua_err.to_string(),
-                })).await;
+                let status = ClientProto::task_status(TaskInfo::interrupted(status, lua_err.to_string()));
+                let res = ctx.lock().unwrap().client.send_typed(&status).await;
                 if let Err(e) = res {
-                    eprintln!("[!] FAILED TO REPORT JOB STATUS ({}): {:?}", status, e);
+                    eprintln!("[!] FAILED TO REPORT JOB STATUS ({:?}): {:?}", status, e);
                 }
             }
         }
     }
 
     async fn run_command(&mut self, command: &[String], working_dir: Option<&str>) -> Result<(), String> {
-        self.client.send(serde_json::json!({
-            "kind": "command",
-            "state": "started",
-            "command": command,
-            "cwd": working_dir,
-            "id": 1,
-        })).await.unwrap();
+        self.client.send_typed(&ClientProto::command(CommandInfo::started(command, working_dir, 1)))
+            .await.unwrap();
 
         let mut cmd = Command::new(&command[0]);
         let cwd = match working_dir {
@@ -339,12 +312,8 @@ impl RunningJob {
 
         let cmd_res = self.execute_command(cmd, &format!("{} log", human_name), &human_name).await?;
 
-        self.client.send(serde_json::json!({
-            "kind": "command",
-            "state": "finished",
-            "exit_code": cmd_res.code(),
-            "id": 1,
-        })).await.unwrap();
+        self.client.send_typed(&ClientProto::command(CommandInfo::finished(cmd_res.code(), 1)))
+            .await.unwrap();
 
 
         if !cmd_res.success() {
@@ -383,11 +352,15 @@ impl RunnerClient {
         match self.rx.chunk().await {
             Ok(Some(chunk)) => {
                 eprintln!("got chunk: {:?}", &chunk);
-                serde_json::from_slice(&chunk)
-                    .map(Option::Some)
+                let proto_message: ClientProto = serde_json::from_slice(&chunk)
                     .map_err(|e| {
                         WorkAcquireError::Protocol(format!("not json: {:?}", e))
-                    })
+                    })?;
+                if let ClientProto::NewTask(new_task) = proto_message {
+                    Ok(Some(new_task))
+                } else {
+                    Err(WorkAcquireError::Protocol(format!("unexpected message: {:?}", proto_message)))
+                }
             }
             Ok(None) => {
                 Ok(None)
@@ -419,8 +392,12 @@ impl RunnerClient {
     }
 
     async fn send(&mut self, value: serde_json::Value) -> Result<(), String> {
+        self.send_typed(&value).await
+    }
+
+    async fn send_typed<T: Serialize>(&mut self, t: &T) -> Result<(), String> {
         self.tx.send_data(
-            serde_json::to_vec(&value)
+            serde_json::to_vec(t)
                 .map_err(|e| format!("json error: {:?}", e))?
                 .into()
         ).await
@@ -448,13 +425,16 @@ async fn main() {
         .build()
         .expect("can build client");
 
+    let host_info = host_info::collect_host_info();
+    eprintln!("host info: {:?}", host_info);
+
     loop {
         let (mut sender, body) = hyper::Body::channel();
 
-        sender.send_data(serde_json::to_string(&json!({
-            "kind": "new_job_please",
-            "accepted_pushers": &runner_config.allowed_pushers,
-        })).unwrap().into()).await.expect("req");
+        sender.send_data(serde_json::to_string(&ClientProto::new_task_please(
+            runner_config.allowed_pushers.clone(),
+            host_info.clone(),
+        )).unwrap().into()).await.expect("req");
 
         let poll = client.post("https://ci.butactuallyin.space:9876/api/next_job")
             .header("user-agent", "ci-butactuallyin-space-runner")
@@ -510,3 +490,60 @@ async fn main() {
         }
     }
 }
+
+mod host_info {
+    use crate::protocol::{CpuInfo, EnvInfo, HostInfo, MemoryInfo};
+
+    // get host model name, microcode, and how many cores
+    fn collect_cpu_info() -> CpuInfo {
+        let cpu_lines: Vec<String> = std::fs::read_to_string("/proc/cpuinfo").unwrap().split("\n").map(|line| line.to_string()).collect();
+        let model_names: Vec<&String> = cpu_lines.iter().filter(|line| line.starts_with("model name")).collect();
+        let model = model_names.first().expect("can get model name").to_string().split(":").last().unwrap().trim().to_string();
+        let cores = model_names.len() as u32;
+        let microcode = cpu_lines.iter().find(|line| line.starts_with("microcode")).expect("microcode line is present").split(":").last().unwrap().trim().to_string();
+
+        CpuInfo { model, microcode, cores }
+    }
+
+    fn collect_mem_info() -> MemoryInfo {
+        let mem_lines: Vec<String> = std::fs::read_to_string("/proc/meminfo").unwrap().split("\n").map(|line| line.to_string()).collect();
+        let total = mem_lines[0].split(":").last().unwrap().trim().to_string();
+        let available = mem_lines[2].split(":").last().unwrap().trim().to_string();
+
+        MemoryInfo { total, available }
+    }
+
+    fn hostname() -> String {
+        let mut bytes = [0u8; 4096];
+        let res = unsafe {
+            libc::gethostname(bytes.as_mut_ptr() as *mut i8, bytes.len())
+        };
+        if res != 0 {
+            panic!("gethostname failed {:?}", res);
+        }
+        let end = bytes.iter().position(|b| *b == 0).expect("hostname is null-terminated");
+        std::ffi::CStr::from_bytes_with_nul(&bytes[..end+1]).expect("null-terminated string").to_str().expect("is utf-8").to_string()
+    }
+
+    pub fn collect_env_info() -> EnvInfo {
+        EnvInfo {
+            arch: std::env::consts::ARCH.to_string(),
+            family: std::env::consts::FAMILY.to_string(),
+            os: std::env::consts::OS.to_string(),
+        }
+    }
+
+    pub fn collect_host_info() -> HostInfo {
+        let cpu_info = collect_cpu_info();
+        let memory_info = collect_mem_info();
+//        let hostname = hostname();
+        let env_info = collect_env_info();
+
+        HostInfo {
+            cpu_info,
+            memory_info,
+            env_info,
+        }
+    }
+}
+
