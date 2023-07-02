@@ -384,6 +384,17 @@ impl DbCtx {
         Ok(run_id)
     }
 
+    pub fn reap_task(&self, task_id: u64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+
+        conn.execute(
+            "update runs set final_status=\"lost signal\", state=4 where id=?1;",
+            [task_id]
+        ).unwrap();
+
+        Ok(())
+    }
+
     pub fn metrics_for_run(&self, run: u64) -> Result<Vec<MetricRecord>, String> {
         let conn = self.conn.lock().unwrap();
 

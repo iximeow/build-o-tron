@@ -11,7 +11,7 @@ pub enum JobResult {
     Fail = 1,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum RunState {
     Pending = 0,
     Started = 1,
