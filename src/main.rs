@@ -49,8 +49,8 @@ struct WebserverConfig {
     jobs_path: PathBuf,
     config_path: PathBuf,
     db_path: PathBuf,
-    debug_addr: Option<String>,
-    server_addr: Option<String>,
+    debug_addr: Option<serde_json::Value>,
+    server_addr: Option<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -926,6 +926,49 @@ async fn make_app_server(jobs_path: PathBuf, cfg_path: &PathBuf, db_path: &PathB
         })
 }
 
+async fn bind_server(conf: serde_json::Value, jobs_path: PathBuf, config_path: PathBuf, db_path: PathBuf) -> std::io::Result<()> {
+    let server = make_app_server(jobs_path.clone(), &config_path, &db_path).await.into_make_service();
+    use serde_json::Value;
+    match conf {
+        Value::String(address) => {
+            axum_server::bind(address.parse().unwrap())
+                .serve(server).await
+        },
+        Value::Object(map) => {
+            let address = match map.get("address") {
+                Some(Value::String(address)) => address.clone(),
+                None => {
+                    panic!("no local address");
+                },
+                other => {
+                    panic!("invalid local address: {:?}", other);
+                }
+            };
+
+            match (map.get("cert_path"), map.get("key_path")) {
+                (Some(Value::String(cert_path)), Some(Value::String(key_path))) => {
+                    let config = RustlsConfig::from_pem_file(
+                        cert_path.clone(),
+                        key_path.clone(),
+                    ).await.unwrap();
+                    axum_server::bind_rustls(address.parse().unwrap(), config)
+                        .serve(server).await
+                },
+                (Some(_), _) | (_, Some(_)) => {
+                    panic!("invalid local tls config: only one of `cert_path` or `key_path` has been provided");
+                },
+                (None, None) => {
+                    axum_server::bind(address.parse().unwrap())
+                        .serve(server).await
+                }
+            }
+        },
+        other => {
+            panic!("invalid server bind config: {:?}", other);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -939,21 +982,14 @@ async fn main() {
     // drop write lock so we can read PSKS elsewhere WITHOUT deadlocking.
     std::mem::drop(psks);
 
-    let config = RustlsConfig::from_pem_file(
-        web_config.cert_path.clone(),
-        web_config.key_path.clone(),
-    ).await.unwrap();
-
     let jobs_path = web_config.jobs_path.clone();
     let config_path = web_config.config_path.clone();
     let db_path = web_config.db_path.clone();
-    if let Some(addr) = web_config.debug_addr.as_ref() {
-        spawn(axum_server::bind_rustls("127.0.0.1:8080".parse().unwrap(), config.clone())
-            .serve(make_app_server(jobs_path.clone(), &config_path, &db_path).await.into_make_service()));
+    if let Some(addr_conf) = web_config.debug_addr.as_ref() {
+        spawn(bind_server(addr_conf.clone(), jobs_path.clone(), config_path.clone(), db_path.clone()));
     }
-    if let Some(addr) = web_config.server_addr.as_ref() {
-        spawn(axum_server::bind_rustls("0.0.0.0:443".parse().unwrap(), config)
-            .serve(make_app_server(jobs_path.clone(), &config_path, &db_path).await.into_make_service()));
+    if let Some(addr_conf) = web_config.server_addr.as_ref() {
+        spawn(bind_server(addr_conf.clone(), jobs_path.clone(), config_path.clone(), db_path.clone()));
     }
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
