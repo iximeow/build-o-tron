@@ -511,6 +511,22 @@ async fn main() {
     spawn(axum_server::bind_rustls(driver_config.server_addr.parse().unwrap(), config)
           .serve(api_server.into_make_service()));
 
+    spawn(old_task_reaper(Arc::clone(&dbctx)));
+
+    loop {
+        let runs = dbctx.get_pending_runs().unwrap();
+
+        if runs.len() > 0 {
+            println!("{} new runs", runs.len());
+
+            for run in runs.into_iter() {
+                activate_run(Arc::clone(&dbctx), &run, &mut channel).await;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 async fn old_task_reaper(dbctx: Arc<DbCtx>) {
     let mut potentially_stale_tasks = dbctx.get_active_runs().unwrap();
 
@@ -553,22 +569,7 @@ async fn old_task_reaper(dbctx: Arc<DbCtx>) {
     }).collect();
 
     for task in stale_tasks.iter() {
+        eprintln!("looks like task {} is stale, reaping", task.id);
         dbctx.reap_task(task.id).expect("works");
-    }
-}
-
-    spawn(old_task_reaper(Arc::clone(&dbctx)));
-
-    loop {
-        let runs = dbctx.get_pending_runs().unwrap();
-
-        if runs.len() > 0 {
-            println!("{} new runs", runs.len());
-
-            for run in runs.into_iter() {
-                activate_run(Arc::clone(&dbctx), &run, &mut channel).await;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
