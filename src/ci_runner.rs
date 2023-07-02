@@ -501,7 +501,7 @@ mod host_info {
         let model_name = model_names.first().expect("can get model name").to_string().split(":").last().unwrap().trim().to_string();
         let cores = model_names.len() as u32;
         let vendor_id = cpu_lines.iter().find(|line| line.starts_with("vendor_id")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
-        let family = cpu_lines.iter().find(|line| line.starts_with("vendor_id")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
+        let family = cpu_lines.iter().find(|line| line.starts_with("cpu family")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
         let model = cpu_lines.iter().find(|line| line.starts_with("model\t")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
         let microcode = cpu_lines.iter().find(|line| line.starts_with("microcode")).expect("microcode line is present").split(":").last().unwrap().trim().to_string();
 
