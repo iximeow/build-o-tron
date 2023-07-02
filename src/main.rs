@@ -169,10 +169,14 @@ fn display_run_time(run: &Run) -> String {
                 duration
             }
         } else {
-            let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
-            let mut duration = duration_as_human_string(now_ms - start_time);
-            duration.push_str(" (ongoing)");
-            duration
+            if run.state != RunState::Invalid {
+                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
+                let mut duration = duration_as_human_string(now_ms - start_time);
+                duration.push_str(" (ongoing)");
+                duration
+            } else {
+                "n/a".to_string()
+            }
         }
     } else {
         "not yet run".to_owned()
