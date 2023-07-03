@@ -12,15 +12,29 @@ pub struct BuildEnv {
     job: Arc<Mutex<RunningJob>>,
 }
 
+#[derive(Debug)]
+pub struct RunParams {
+    step: Option<String>,
+    name: Option<String>,
+    cwd: Option<String>,
+}
+
+pub struct CommandOutput {
+    pub exit_status: std::process::ExitStatus,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
 mod lua_exports {
     use crate::RunningJob;
+    use crate::lua::{CommandOutput, RunParams};
 
     use std::sync::{Arc, Mutex};
     use std::path::PathBuf;
 
     use rlua::prelude::*;
 
-    pub fn build_command_impl(command: LuaValue, params: LuaValue, job_ctx: Arc<Mutex<RunningJob>>) -> Result<(), rlua::Error> {
+    pub fn collect_build_args(command: LuaValue, params: LuaValue) -> Result<(Vec<String>, RunParams), rlua::Error> {
         let args = match command {
             LuaValue::Table(table) => {
                 let len = table.len().expect("command table has a length");
@@ -43,13 +57,6 @@ mod lua_exports {
                 return Err(LuaError::RuntimeError(format!("argument 1 was not a table: {:?}", other)));
             }
         };
-
-        #[derive(Debug)]
-        struct RunParams {
-            step: Option<String>,
-            name: Option<String>,
-            cwd: Option<String>,
-        }
 
         let params = match params {
             LuaValue::Table(table) => {
@@ -104,6 +111,12 @@ mod lua_exports {
                 return Err(LuaError::RuntimeError(format!("argument 2 was not a table: {:?}", other)));
             }
         };
+
+        Ok((args, params))
+    }
+
+    pub fn build_command_impl(command: LuaValue, params: LuaValue, job_ctx: Arc<Mutex<RunningJob>>) -> Result<(), rlua::Error> {
+        let (args, params) = collect_build_args(command, params)?;
         eprintln!("args: {:?}", args);
         eprintln!("  params: {:?}", params);
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -114,6 +127,29 @@ mod lua_exports {
             job_ctx.lock().unwrap().run_command(&args, params.cwd.as_ref().map(|x| x.as_str())).await
                 .map_err(|e| LuaError::RuntimeError(format!("run_command error: {:?}", e)))
         })
+    }
+
+    pub fn check_output_impl<'lua>(ctx: rlua::Context<'lua>, command: LuaValue<'lua>, params: LuaValue<'lua>, job_ctx: Arc<Mutex<RunningJob>>) -> Result<rlua::Table<'lua>, rlua::Error> {
+        let (args, params) = collect_build_args(command, params)?;
+        eprintln!("args: {:?}", args);
+        eprintln!("  params: {:?}", params);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let command_output = rt.block_on(async move {
+            job_ctx.lock().unwrap().run_with_output(&args, params.cwd.as_ref().map(|x| x.as_str())).await
+                .map_err(|e| LuaError::RuntimeError(format!("run_command error: {:?}", e)))
+        })?;
+
+        let stdout = ctx.create_string(command_output.stdout.as_slice())?;
+        let stderr = ctx.create_string(command_output.stderr.as_slice())?;
+
+        let result = ctx.create_table()?;
+        result.set("stdout", stdout)?;
+        result.set("stderr", stderr)?;
+        result.set("status", command_output.exit_status.code())?;
+        Ok(result)
     }
 
     pub fn metric(name: String, value: String, job_ctx: Arc<Mutex<RunningJob>>) -> Result<(), rlua::Error> {
@@ -251,6 +287,10 @@ impl BuildEnv {
             lua_exports::build_command_impl(command, params, job_ref)
         })?;
 
+        let check_output = decl_env.create_function("check_output", move |ctx, job_ref, (command, params): (LuaValue, LuaValue)| {
+            lua_exports::check_output_impl(ctx, command, params, job_ref)
+        })?;
+
         let metric = decl_env.create_function("metric", move |_, job_ref, (name, value): (String, String)| {
             lua_exports::metric(name, value, job_ref)
         })?;
@@ -301,6 +341,7 @@ impl BuildEnv {
                 ("error", error),
                 ("artifact", artifact),
                 ("now_ms", now_ms),
+                ("check_output", check_output),
             ]
         ).unwrap();
         build_functions.set("environment", build_environment).unwrap();

@@ -17,8 +17,9 @@ mod protocol;
 mod lua;
 mod io;
 
-use crate::io::ArtifactStream;
+use crate::io::{ArtifactStream, VecSink};
 use crate::protocol::{ClientProto, CommandInfo, TaskInfo, RequestedJob};
+use crate::lua::CommandOutput;
 
 #[derive(Debug)]
 enum WorkAcquireError {
@@ -144,7 +145,7 @@ impl RunningJob {
             .arg(&self.job.remote_url)
             .arg("tmpdir");
 
-        let clone_res = self.execute_command(git_clone, "git clone log", &format!("git clone {} tmpdir", &self.job.remote_url)).await
+        let clone_res = self.execute_command_and_report(git_clone, "git clone log", &format!("git clone {} tmpdir", &self.job.remote_url)).await
             .map_err(|e| {
                 eprintln!("stringy error (exec failed?) for clone: {}", e);
                 RepoError::CloneFailedIdk { exit_code: ExitStatus::from_raw(0) }
@@ -160,7 +161,7 @@ impl RunningJob {
             .arg("checkout")
             .arg(&self.job.commit);
 
-        let checkout_res = self.execute_command(git_checkout, "git checkout log", &format!("git checkout {}", &self.job.commit)).await
+        let checkout_res = self.execute_command_and_report(git_checkout, "git checkout log", &format!("git checkout {}", &self.job.commit)).await
             .map_err(|e| {
                 eprintln!("stringy error (exec failed?) for checkout: {}", e);
                 RepoError::CheckoutFailedIdk { exit_code: ExitStatus::from_raw(0) }
@@ -177,16 +178,36 @@ impl RunningJob {
         Ok(())
     }
 
-    async fn execute_command(&self, mut command: Command, name: &str, desc: &str) -> Result<ExitStatus, String> {
-        eprintln!("[.] running {}", name);
-        let mut stdout_artifact = self.create_artifact(
+    async fn execute_command_and_report(&self, mut command: Command, name: &str, desc: &str) -> Result<ExitStatus, String> {
+        let stdout_artifact = self.create_artifact(
             &format!("{} (stdout)", name),
             &format!("{} (stdout)", desc)
         ).await.expect("works");
-        let mut stderr_artifact = self.create_artifact(
+        let stderr_artifact = self.create_artifact(
             &format!("{} (stderr)", name),
             &format!("{} (stderr)", desc)
         ).await.expect("works");
+
+        let exit_status = self.execute_command(command, name, desc, stdout_artifact, stderr_artifact).await?;
+
+        Ok(exit_status)
+    }
+
+    async fn execute_command_capture_output(&self, mut command: Command, name: &str, desc: &str) -> Result<crate::lua::CommandOutput, String> {
+        let stdout_collector = VecSink::new();
+        let stderr_collector = VecSink::new();
+
+        let exit_status = self.execute_command(command, name, desc, stdout_collector.clone(), stderr_collector.clone()).await?;
+
+        Ok(CommandOutput {
+            exit_status,
+            stdout: stdout_collector.take_buf(),
+            stderr: stderr_collector.take_buf(),
+        })
+    }
+
+    async fn execute_command(&self, mut command: Command, name: &str, desc: &str, mut stdout_reporter: impl AsyncWrite + Unpin + Send + 'static, mut stderr_reporter: impl AsyncWrite + Unpin + Send + 'static) -> Result<ExitStatus, String> {
+        eprintln!("[.] running {}", name);
 
         let mut child = command
             .stdin(Stdio::null())
@@ -199,9 +220,9 @@ impl RunningJob {
         let mut child_stderr = child.stderr.take().unwrap();
 
         eprintln!("[.] '{}': forwarding stdout", name);
-        tokio::spawn(async move { crate::io::forward_data(&mut child_stdout, &mut stdout_artifact).await });
+        tokio::spawn(async move { crate::io::forward_data(&mut child_stdout, &mut stdout_reporter).await });
         eprintln!("[.] '{}': forwarding stderr", name);
-        tokio::spawn(async move { crate::io::forward_data(&mut child_stderr, &mut stderr_artifact).await });
+        tokio::spawn(async move { crate::io::forward_data(&mut child_stderr, &mut stderr_reporter).await });
 
         let res = child.wait().await
             .map_err(|e| format!("failed to wait? {:?}", e))?;
@@ -291,10 +312,7 @@ impl RunningJob {
         }
     }
 
-    async fn run_command(&mut self, command: &[String], working_dir: Option<&str>) -> Result<(), String> {
-        self.client.send_typed(&ClientProto::command(CommandInfo::started(command, working_dir, 1)))
-            .await.unwrap();
-
+    fn prep_command(command: &[String], working_dir: Option<&str>) -> (Command, String) {
         let mut cmd = Command::new(&command[0]);
         let cwd = match working_dir {
             Some(dir) => {
@@ -304,13 +322,32 @@ impl RunningJob {
                 "tmpdir".to_string()
             }
         };
-        eprintln!("running {:?} in {}", &command, &cwd);
+        eprintln!("prepared {:?} to run in {}", &command, &cwd);
         let human_name = command.join(" ");
         cmd
             .current_dir(cwd)
             .args(&command[1..]);
+        (cmd, human_name)
+    }
 
-        let cmd_res = self.execute_command(cmd, &format!("{} log", human_name), &human_name).await?;
+    async fn run_with_output(&mut self, command: &[String], working_dir: Option<&str>) -> Result<CommandOutput, String> {
+        let (cmd, human_name) = Self::prep_command(command, working_dir);
+
+        let cmd_res = self.execute_command_capture_output(cmd, &format!("{} log", human_name), &human_name).await?;
+
+        if !cmd_res.exit_status.success() {
+            return Err(format!("{} failed: {:?}", &human_name, cmd_res.exit_status));
+        }
+        Ok(cmd_res)
+    }
+
+    async fn run_command(&mut self, command: &[String], working_dir: Option<&str>) -> Result<(), String> {
+        self.client.send_typed(&ClientProto::command(CommandInfo::started(command, working_dir, 1)))
+            .await.unwrap();
+
+        let (cmd, human_name) = Self::prep_command(command, working_dir);
+
+        let cmd_res = self.execute_command_and_report(cmd, &format!("{} log", human_name), &human_name).await?;
 
         self.client.send_typed(&ClientProto::command(CommandInfo::finished(cmd_res.code(), 1)))
             .await.unwrap();

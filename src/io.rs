@@ -6,12 +6,53 @@ use tokio::fs::OpenOptions;
 use std::task::{Poll, Context};
 use std::pin::Pin;
 use std::time::{UNIX_EPOCH, SystemTime};
+use std::sync::{Arc, Mutex};
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("now is later than epoch")
         .as_millis() as u64
+}
+
+#[derive(Clone)]
+pub struct VecSink {
+    body: Arc<Mutex<Vec<u8>>>,
+}
+
+impl VecSink {
+    pub fn new() -> Self {
+        Self { body: Arc::new(Mutex::new(Vec::new())) }
+    }
+
+    pub fn take_buf(&self) -> Vec<u8> {
+        std::mem::replace(&mut *self.body.lock().unwrap(), Vec::new())
+    }
+}
+
+impl tokio::io::AsyncWrite for VecSink {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8]
+    ) -> Poll<Result<usize, std::io::Error>> {
+        self.body.lock().unwrap().extend_from_slice(buf);
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut Context
+    ) -> Poll<Result<(), std::io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _cx: &mut Context
+    ) -> Poll<Result<(), std::io::Error>> {
+        Poll::Ready(Ok(()))
+    }
 }
 
 pub struct ArtifactStream {
