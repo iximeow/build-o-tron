@@ -496,16 +496,67 @@ mod host_info {
 
     // get host model name, microcode, and how many cores
     fn collect_cpu_info() -> CpuInfo {
-        let cpu_lines: Vec<String> = std::fs::read_to_string("/proc/cpuinfo").unwrap().split("\n").map(|line| line.to_string()).collect();
-        let model_names: Vec<&String> = cpu_lines.iter().filter(|line| line.starts_with("model name")).collect();
-        let model_name = model_names.first().expect("can get model name").to_string().split(":").last().unwrap().trim().to_string();
-        let cores = model_names.len() as u32;
-        let vendor_id = cpu_lines.iter().find(|line| line.starts_with("vendor_id")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
-        let family = cpu_lines.iter().find(|line| line.starts_with("cpu family")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
-        let model = cpu_lines.iter().find(|line| line.starts_with("model\t")).expect("vendor_id line is present").split(":").last().unwrap().trim().to_string();
-        let microcode = cpu_lines.iter().find(|line| line.starts_with("microcode")).expect("microcode line is present").split(":").last().unwrap().trim().to_string();
+        fn find_line(lines: &[String], prefix: &str) -> String {
+            lines.iter()
+                .find(|line| line.starts_with(prefix))
+                .expect(&format!("{} line is present", prefix))
+                .split(":")
+                .last()
+                .unwrap()
+                .trim()
+                .to_string()
+        }
 
-        CpuInfo { model_name, microcode, cores, vendor_id, family, model }
+        // we'll have to deploy one of a few techniques, because x86/x86_64 is internally
+        // consistent, but aarch64 is different. who knows what other CPUs think.
+        match std::env::consts::ARCH {
+            "x86" | "x86_64" => {
+                let cpu_lines: Vec<String> = std::fs::read_to_string("/proc/cpuinfo").unwrap().split("\n").map(|line| line.to_string()).collect();
+                let model_names: Vec<&String> = cpu_lines.iter().filter(|line| line.starts_with("model name")).collect();
+                let cores = model_names.len() as u32;
+                let model_name = find_line(&cpu_lines, "model name");
+                let vendor_id = find_line(&cpu_lines, "vendor_id");
+                let family = find_line(&cpu_lines, "cpu family");
+                let model = find_line(&cpu_lines, "model\t");
+                let microcode = find_line(&cpu_lines, "microcode");
+
+                CpuInfo { model_name, microcode, cores, vendor_id, family, model }
+            }
+            "aarch64" => {
+                let cpu_lines: Vec<String> = std::fs::read_to_string("/proc/cpuinfo").unwrap().split("\n").map(|line| line.to_string()).collect();
+                let processors: Vec<&String> = cpu_lines.iter().filter(|line| line.starts_with("processor")).collect();
+                let cores = processors.len() as u32;
+
+                // alternate possible path: /sys/firmware/devicetree/base/compatible
+                let model_name = std::fs::read_to_string("/proc/device-tree/compatible").unwrap();
+                let model_name = model_name.replace("\x00", ";");
+                let vendor_id = find_line(&cpu_lines, "CPU implementer");
+                let vendor_name = match vendor_id.as_str() {
+                    "0x41" => "Arm Limited".to_string(),
+                    "0x42" => "Broadcom Corporation".to_string(),
+                    "0x43" => "Cavium Inc".to_string(),
+                    "0x44" => "Digital Equipment Corporation".to_string(),
+                    "0x46" => "Fujitsu Ltd".to_string(),
+                    "0x49" => "Infineon Technologies AG".to_string(),
+                    "0x4d" => "Motorola".to_string(),
+                    "0x4e" => "NVIDIA Corporation".to_string(),
+                    "0x50" => "Applied Micro Circuits Corporation".to_string(),
+                    "0x51" => "Qualcomm Inc".to_string(),
+                    "0x56" => "Marvell International Ltd".to_string(),
+                    "0x69" => "Intel Corporation".to_string(),
+                    "0xc0" => "Ampere Computing".to_string(),
+                    other => format!("unknown aarch64 vendor {}", other),
+                };
+                let family = find_line(&cpu_lines, "CPU architecture");
+                let model = find_line(&cpu_lines, "CPU part");
+                let microcode = String::new();
+
+                CpuInfo { model_name, microcode, cores, vendor_id: vendor_name, family, model }
+            }
+            other => {
+                panic!("dunno how to find cpu info for {}, panik", other);
+            }
+        }
     }
 
     fn collect_mem_info() -> MemoryInfo {
