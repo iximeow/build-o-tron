@@ -273,12 +273,25 @@ impl BuildEnv {
             lua_exports::file_size(&name)
         })?;
 
+        let native_rust_triple = match std::env::consts::ARCH {
+            "x86_64" => "x86_64-unknown-linux-gnu",
+            "aarch64" => "aarch64-unknown-linux-gnu",
+            other => { panic!("dunno native rust triple for arch {}", other); }
+        };
+        let native_rust_triple = lua_ctx.create_string(native_rust_triple).unwrap();
+        let build_env_vars = lua_ctx.create_table_from(
+            vec![
+                ("native_rust_triple", native_rust_triple)
+            ]
+        ).unwrap();
+
         let build_environment = lua_ctx.create_table_from(
             vec![
                 ("has", path_has_cmd),
                 ("size", size_of_file),
             ]
         ).unwrap();
+        build_environment.set("vars", build_env_vars).unwrap();
 
         let build_functions = lua_ctx.create_table_from(
             vec![
