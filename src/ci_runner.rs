@@ -519,7 +519,7 @@ mod host_info {
     fn hostname() -> String {
         let mut bytes = [0u8; 4096];
         let res = unsafe {
-            libc::gethostname(bytes.as_mut_ptr() as *mut i8, bytes.len())
+            libc::gethostname(bytes.as_mut_ptr() as *mut std::ffi::c_char, bytes.len())
         };
         if res != 0 {
             panic!("gethostname failed {:?}", res);
