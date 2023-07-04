@@ -533,6 +533,8 @@ async fn main() {
 }
 
 async fn find_client_task(dbctx: Arc<DbCtx>, mut candidate: RunnerClient) -> Result<(), String> {
+    let find_client_task_start = std::time::Instant::now();
+
     let (run, job) = 'find_work: loop {
         // try to find a job for this candidate:
         // * start with pending runs - these need *some* client to run them, but do not care which
@@ -567,6 +569,10 @@ async fn find_client_task(dbctx: Arc<DbCtx>, mut candidate: RunnerClient) -> Res
 
         if candidate.test_connection().await.is_err() {
             return Err("lost client connection".to_string());
+        }
+
+        if find_client_task_start.elapsed().as_secs() > 300 {
+            return Err("5min new task deadline elapsed".to_string());
         }
     };
 
