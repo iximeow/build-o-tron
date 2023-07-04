@@ -388,7 +388,6 @@ impl RunnerClient {
     async fn wait_for_work(&mut self, accepted_pushers: Option<&[String]>) -> Result<Option<RequestedJob>, WorkAcquireError> {
         loop {
             let message = self.recv_typed::<ClientProto>().await;
-            eprintln!("got message: {:?}", &message);
             match message {
                 Ok(Some(ClientProto::NewTask(new_task))) => {
                     return Ok(Some(new_task));
