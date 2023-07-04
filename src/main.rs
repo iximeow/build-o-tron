@@ -260,7 +260,6 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
         .query_row("select default_run_preference from repos where id=?1;", [repo_id], |row| {
             Ok((row.get(0)).unwrap())
         })
-        .optional()
         .expect("can query");
 
     let pusher_email = pusher
