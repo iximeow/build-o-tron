@@ -176,6 +176,12 @@ pub const JOB_BY_ID: &'static str = "\
 pub const METRICS_FOR_RUN: &'static str = "\
     select * from metrics where run_id=?1 order by id asc;";
 
+pub const METRICS_FOR_JOB: &'static str = "\
+    select metrics.id, metrics.run_id, metrics.name, metrics.value from metrics \
+    join runs on runs.id=metrics.run_id \
+    where runs.job_id=?1 \
+    order by metrics.run_id desc, metrics.id desc;";
+
 pub const COMMIT_TO_ID: &'static str = "\
     select id from commits where sha=?1;";
 
@@ -201,6 +207,20 @@ pub const LAST_RUN_FOR_JOB: &'static str = "\
         run_timeout,
         build_result,
         final_status from runs where job_id=?1 order by started_time desc limit 1;";
+
+pub const RUNS_FOR_JOB: &'static str = "\
+    select id,
+        job_id,
+        artifacts_path,
+        state,
+        host_id,
+        build_token,
+        created_time,
+        started_time,
+        complete_time,
+        run_timeout,
+        build_result,
+        final_status from runs where job_id=?1 group by host_id order by started_time desc, state asc;";
 
 pub const SELECT_ALL_RUNS_WITH_JOB_INFO: &'static str = "\
     select jobs.id as job_id, runs.id as run_id, runs.state, runs.created_time, jobs.commit_id, jobs.run_preferences

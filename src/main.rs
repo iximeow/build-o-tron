@@ -5,6 +5,7 @@
 use chrono::{Utc, TimeZone};
 use lazy_static::lazy_static;
 use std::sync::RwLock;
+use std::collections::HashMap;
 use serde_derive::{Deserialize, Serialize};
 use tokio::spawn;
 use std::path::PathBuf;
@@ -612,22 +613,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         }
     }
 
-    let metrics = ctx.dbctx.metrics_for_run(run.id).unwrap();
-    let metrics_section = if metrics.len() > 0 {
-        let mut section = String::new();
-        section.push_str("<div>");
-        section.push_str("<h3>metrics</h3>");
-        section.push_str("<table style='font-family: monospace;'>");
-        section.push_str("<tr><th>name</th><th>value</th></tr>");
-        for metric in metrics {
-            section.push_str(&format!("<tr><td>{}</td><td>{}</td></tr>", &metric.name, &metric.value));
-        }
-        section.push_str("</table>");
-        section.push_str("</div>");
-        Some(section)
-    } else {
-        None
-    };
+    let metrics = summarize_job_metrics(&ctx.dbctx, run.id, run.job_id).unwrap();
 
     let mut html = String::new();
     html.push_str("<html>\n");
@@ -646,13 +632,93 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         html.push_str("    <div>artifacts</div>\n");
         html.push_str(&artifacts_fragment);
     }
-    if let Some(metrics) = metrics_section {
+    if let Some(metrics) = metrics {
         html.push_str(&metrics);
     }
     html.push_str("  </body>\n");
     html.push_str("</html>");
 
     (StatusCode::OK, Html(html))
+}
+
+fn summarize_job_metrics(dbctx: &Arc<DbCtx>, run_id: u64, job_id: u64) -> Result<Option<String>, String> {
+    let runs = dbctx.runs_for_job_one_per_host(job_id)?;
+
+    let mut section = String::new();
+    section.push_str("<div>\n");
+    section.push_str("<h3>metrics</h3>\n");
+    section.push_str("<table style='font-family: monospace;'>\n");
+
+    if runs.len() == 1 {
+        let metrics = dbctx.metrics_for_run(run_id).unwrap();
+        if metrics.is_empty() {
+            return Ok(None);
+        }
+
+        section.push_str("<tr><th>name</th><th>value</th></tr>");
+        for metric in metrics {
+            section.push_str(&format!("<tr><td>{}</td><td>{}</td></tr>", &metric.name, &metric.value));
+        }
+    } else {
+        // very silly ordering issue: need an authoritative ordering of metrics to display metrics
+        // in a consistent order across runs (though they SHOULD all be ordered the same).
+        //
+        // the first run might not have all metrics (first run could be on the slowest build host
+        // f.ex), so for now just assume that metrics *will* be consistently ordered and build a
+        // list of metrics from the longest list of metrics we've seen. builders do not support
+        // concurrency so at least the per-run metrics-order-consistency assumption should hold..
+        let mut all_names: Vec<String> = Vec::new();
+
+        let all_metrics: Vec<(HashMap<String, String>, HostDesc)> = runs.iter().map(|run| {
+            let metrics = dbctx.metrics_for_run(run.id).unwrap();
+
+            let mut metrics_map = HashMap::new();
+            for metric in metrics.into_iter() {
+                if !all_names.contains(&metric.name) {
+                    all_names.push(metric.name.clone());
+                }
+                metrics_map.insert(metric.name, metric.value);
+            }
+
+            let (hostname, cpu_vendor_id, cpu_family, cpu_model) = match run.host_id {
+                Some(host_id) => {
+                    dbctx.host_model_info(host_id).unwrap()
+                }
+                None => {
+                    ("unknown".to_string(), "unknown".to_string(), "0".to_string(), "0".to_string())
+                }
+            };
+
+            (metrics_map, HostDesc::from_parts(hostname, cpu_vendor_id, cpu_family, cpu_model))
+        }).collect();
+
+        if all_metrics.is_empty() {
+            return Ok(None);
+        }
+
+        let mut header = "<tr><th>name</th>".to_string();
+        for (_, host) in all_metrics.iter() {
+            header.push_str(&format!("<th>{} - {}</th>", &host.hostname, &host.cpu_desc));
+        }
+        header.push_str("</tr>\n");
+        section.push_str(&header);
+
+        for name in all_names.iter() {
+            let mut row = format!("<tr><td>{}</td>", &name);
+            for (metrics, _) in all_metrics.iter() {
+                let value = metrics.get(name)
+                    .map(|x| x.clone())
+                    .unwrap_or_else(String::new);
+                row.push_str(&format!("<td>{}</td>", value));
+            }
+            row.push_str("</tr>\n");
+            section.push_str(&row);
+        }
+    };
+    section.push_str("</table>\n");
+    section.push_str("</div>\n");
+
+    Ok(Some(section))
 }
 
 async fn handle_get_artifact(Path(path): Path<(String, String)>, State(ctx): State<WebserverState>) -> impl IntoResponse {
@@ -1000,5 +1066,25 @@ async fn main() {
     }
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    }
+}
+
+struct HostDesc {
+    hostname: String,
+    cpu_desc: String,
+}
+impl HostDesc {
+    fn from_parts(hostname: String, vendor_id: String, cpu_family: String, model: String) -> Self {
+        let cpu_desc = match (vendor_id.as_str(), cpu_family.as_str(), model.as_str()) {
+            ("Arm Limited", "8", "0xd03") => "aarch64 A53".to_string(),
+            ("GenuineIntel", "6", "85") => "x86_64 Skylake".to_string(),
+            ("AuthenticAMD", "23", "113") => "x86_64 Matisse".to_string(),
+            (vendor, family, model) => format!("unknown {}:{}:{}", vendor, family, model)
+        };
+
+        HostDesc {
+            hostname,
+            cpu_desc,
+        }
     }
 }

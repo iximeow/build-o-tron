@@ -666,6 +666,34 @@ impl DbCtx {
             .map_err(|e| e.to_string())
     }
 
+    pub fn host_model_info(&self, host_id: u64) -> Result<(String, String, String, String), String> {
+        let conn = self.conn.lock().unwrap();
+        conn
+            .query_row("select hostname, cpu_vendor_id, cpu_family, cpu_model from hosts;", [host_id], |row| {
+                Ok((
+                    row.get(0).unwrap(),
+                    row.get(1).unwrap(),
+                    row.get(2).unwrap(),
+                    row.get(3).unwrap(),
+                ))
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn runs_for_job_one_per_host(&self, job_id: u64) -> Result<Vec<Run>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut runs_query = conn.prepare(crate::sql::RUNS_FOR_JOB).unwrap();
+        let mut runs_results = runs_query.query([job_id]).unwrap();
+
+        let mut results = Vec::new();
+
+        while let Some(row) = runs_results.next().unwrap() {
+            results.push(crate::sql::row2run(row));
+        }
+
+        Ok(results)
+    }
+
     pub fn last_run_for_job(&self, job_id: u64) -> Result<Option<Run>, String> {
         let conn = self.conn.lock().unwrap();
 
