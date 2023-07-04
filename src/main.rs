@@ -721,7 +721,7 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
 
     let mut last_builds = Vec::new();
 
-    let (repo_id, repo_name, default_run_preference): (u64, String) = match ctx.dbctx.conn.lock().unwrap()
+    let (repo_id, repo_name, default_run_preference): (u64, String, Option<String>) = match ctx.dbctx.conn.lock().unwrap()
         .query_row("select id, repo_name, default_run_preference from repos where repo_name=?1;", [&path], |row| Ok((row.get(0).unwrap(), row.get(1).unwrap(), row.get(2).unwrap())))
         .optional()
         .unwrap() {
