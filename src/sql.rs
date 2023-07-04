@@ -125,6 +125,7 @@ pub const CREATE_HOSTS_TABLE: &'static str = "\
         cpu_family TEXT,
         cpu_model TEXT,
         cpu_microcode TEXT,
+        cpu_max_freq_khz INTEGER,
         cpu_cores INTEGER,
         mem_total TEXT,
         arch TEXT,

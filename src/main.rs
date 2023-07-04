@@ -680,16 +680,16 @@ fn summarize_job_metrics(dbctx: &Arc<DbCtx>, run_id: u64, job_id: u64) -> Result
                 metrics_map.insert(metric.name, metric.value);
             }
 
-            let (hostname, cpu_vendor_id, cpu_family, cpu_model) = match run.host_id {
+            let (hostname, cpu_vendor_id, cpu_family, cpu_model, cpu_max_freq_khz) = match run.host_id {
                 Some(host_id) => {
                     dbctx.host_model_info(host_id).unwrap()
                 }
                 None => {
-                    ("unknown".to_string(), "unknown".to_string(), "0".to_string(), "0".to_string())
+                    ("unknown".to_string(), "unknown".to_string(), "0".to_string(), "0".to_string(), 0)
                 }
             };
 
-            (metrics_map, HostDesc::from_parts(hostname, cpu_vendor_id, cpu_family, cpu_model))
+            (metrics_map, HostDesc::from_parts(hostname, cpu_vendor_id, cpu_family, cpu_model, cpu_max_freq_khz))
         }).collect();
 
         if all_metrics.is_empty() {
@@ -698,7 +698,7 @@ fn summarize_job_metrics(dbctx: &Arc<DbCtx>, run_id: u64, job_id: u64) -> Result
 
         let mut header = "<tr><th>name</th>".to_string();
         for (_, host) in all_metrics.iter() {
-            header.push_str(&format!("<th>{} - {}</th>", &host.hostname, &host.cpu_desc));
+            header.push_str(&format!("<th>{}</br>{} @ {:.3}GHz</th>", &host.hostname, &host.cpu_desc, (host.cpu_max_freq_khz as f64) / 1000_000.0));
         }
         header.push_str("</tr>\n");
         section.push_str(&header);
@@ -1072,9 +1072,10 @@ async fn main() {
 struct HostDesc {
     hostname: String,
     cpu_desc: String,
+    cpu_max_freq_khz: u64,
 }
 impl HostDesc {
-    fn from_parts(hostname: String, vendor_id: String, cpu_family: String, model: String) -> Self {
+    fn from_parts(hostname: String, vendor_id: String, cpu_family: String, model: String, cpu_max_freq_khz: u64) -> Self {
         let cpu_desc = match (vendor_id.as_str(), cpu_family.as_str(), model.as_str()) {
             ("Arm Limited", "8", "0xd03") => "aarch64 A53".to_string(),
             ("GenuineIntel", "6", "85") => "x86_64 Skylake".to_string(),
@@ -1085,6 +1086,7 @@ impl HostDesc {
         HostDesc {
             hostname,
             cpu_desc,
+            cpu_max_freq_khz,
         }
     }
 }

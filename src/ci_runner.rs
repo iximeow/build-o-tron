@@ -545,6 +545,27 @@ mod host_info {
                 .to_string()
         }
 
+        /// try finding core `cpu`'s max frequency in khz. we'll assume this is the actual speed a
+        /// build would run at.. fingers crossed.
+        fn try_finding_cpu_freq(cpu: u32) -> Result<u64, String> {
+            if let Ok(freq_str) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq") {
+                Ok(freq_str.trim().parse().unwrap())
+            } else {
+                // so cpufreq probably isn't around, maybe /proc/cpuinfo's mhz figure is present?
+                let cpu_lines: Vec<String> = std::fs::read_to_string("/proc/cpuinfo").unwrap().split("\n").map(|line| line.to_string()).collect();
+                let cpu_mhzes: Vec<&String> = cpu_lines.iter().filter(|line| line.starts_with("cpu MHz")).collect();
+                match cpu_mhzes.get(cpu as usize) {
+                    Some(mhz) => {
+                        let mhz: f64 = cpu_mhzes[cpu as usize].trim().parse().unwrap();
+                        Ok((mhz * 1000.0) as u64)
+                    },
+                    None => {
+                        panic!("could not get cpu freq either from cpufreq or /proc/cpuinfo?");
+                    }
+                }
+            }
+        }
+
         // we'll have to deploy one of a few techniques, because x86/x86_64 is internally
         // consistent, but aarch64 is different. who knows what other CPUs think.
         match std::env::consts::ARCH {
@@ -557,8 +578,9 @@ mod host_info {
                 let family = find_line(&cpu_lines, "cpu family");
                 let model = find_line(&cpu_lines, "model\t");
                 let microcode = find_line(&cpu_lines, "microcode");
+                let max_freq = try_finding_cpu_freq(0).unwrap();
 
-                CpuInfo { model_name, microcode, cores, vendor_id, family, model }
+                CpuInfo { model_name, microcode, cores, vendor_id, family, model, max_freq }
             }
             "aarch64" => {
                 let cpu_lines: Vec<String> = std::fs::read_to_string("/proc/cpuinfo").unwrap().split("\n").map(|line| line.to_string()).collect();
@@ -588,8 +610,9 @@ mod host_info {
                 let family = find_line(&cpu_lines, "CPU architecture");
                 let model = find_line(&cpu_lines, "CPU part");
                 let microcode = String::new();
+                let max_freq = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").unwrap().trim().parse().unwrap();
 
-                CpuInfo { model_name, microcode, cores, vendor_id: vendor_name, family, model }
+                CpuInfo { model_name, microcode, cores, vendor_id: vendor_name, family, model, max_freq }
             }
             other => {
                 panic!("dunno how to find cpu info for {}, panik", other);

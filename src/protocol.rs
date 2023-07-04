@@ -89,6 +89,8 @@ pub struct CpuInfo {
     pub vendor_id: String,
     pub family: String,
     pub model: String,
+    // clock speed in khz
+    pub max_freq: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

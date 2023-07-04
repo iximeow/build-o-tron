@@ -592,14 +592,15 @@ impl DbCtx {
             .query_row(
                 "select id from hosts where \
                     hostname=?1 and cpu_vendor_id=?2 and cpu_model_name=?3 and cpu_family=?4 and \
-                    cpu_model=?5 and cpu_cores=?6 and mem_total=?7 and \
-                    arch=?10);",
+                    cpu_model=?5 and cpu_max_freq_khz=?6 and cpu_cores=?7 and mem_total=?8 and \
+                    arch=?9);",
                 (
                     &host_info.hostname,
                     &host_info.cpu_info.vendor_id,
                     &host_info.cpu_info.model_name,
                     &host_info.cpu_info.family,
                     &host_info.cpu_info.model,
+                    &host_info.cpu_info.max_freq,
                     &host_info.cpu_info.cores,
                     &host_info.memory_info.total,
                     &host_info.env_info.arch,
@@ -619,12 +620,12 @@ impl DbCtx {
                 "insert or ignore into hosts \
                  (\
                      hostname, cpu_vendor_id, cpu_model_name, cpu_family, \
-                     cpu_model, cpu_microcode, cpu_cores, mem_total, \
-                     arch, family, os\
+                     cpu_model, cpu_microcode, cpu_max_freq_khz, cpu_cores, \
+                     mem_total, arch, family, os\
                  ) values (\
                      ?1, ?2, ?3, ?4, \
                      ?5, ?6, ?7, ?8, \
-                     ?9, ?10, ?11 \
+                     ?9, ?10, ?11, ?12 \
                  );",
                 (
                     &host_info.hostname,
@@ -633,6 +634,7 @@ impl DbCtx {
                     &host_info.cpu_info.family,
                     &host_info.cpu_info.model,
                     &host_info.cpu_info.microcode,
+                    &host_info.cpu_info.max_freq,
                     &host_info.cpu_info.cores,
                     &host_info.memory_info.total,
                     &host_info.env_info.arch,
@@ -646,8 +648,8 @@ impl DbCtx {
             .query_row(
                 "select id from hosts where \
                     hostname=?1 and cpu_vendor_id=?2 and cpu_model_name=?3 and cpu_family=?4 and \
-                    cpu_model=?5 and cpu_microcode=?6 and cpu_cores=?7 and mem_total=?8 and \
-                    arch=?9 and family=?10 and os=?11;",
+                    cpu_model=?5 and cpu_microcode=?6 and cpu_max_freq_khz=?7 and \
+                    cpu_cores=?8 and mem_total=?9 and arch=?10 and family=?11 and os=?12;",
                 (
                     &host_info.hostname,
                     &host_info.cpu_info.vendor_id,
@@ -655,6 +657,7 @@ impl DbCtx {
                     &host_info.cpu_info.family,
                     &host_info.cpu_info.model,
                     &host_info.cpu_info.microcode,
+                    &host_info.cpu_info.max_freq,
                     &host_info.cpu_info.cores,
                     &host_info.memory_info.total,
                     &host_info.env_info.arch,
@@ -666,15 +669,16 @@ impl DbCtx {
             .map_err(|e| e.to_string())
     }
 
-    pub fn host_model_info(&self, host_id: u64) -> Result<(String, String, String, String), String> {
+    pub fn host_model_info(&self, host_id: u64) -> Result<(String, String, String, String, u64), String> {
         let conn = self.conn.lock().unwrap();
         conn
-            .query_row("select hostname, cpu_vendor_id, cpu_family, cpu_model from hosts where id=?1;", [host_id], |row| {
+            .query_row("select hostname, cpu_vendor_id, cpu_family, cpu_model, cpu_max_freq_khz from hosts where id=?1;", [host_id], |row| {
                 Ok((
                     row.get(0).unwrap(),
                     row.get(1).unwrap(),
                     row.get(2).unwrap(),
                     row.get(3).unwrap(),
+                    row.get(4).unwrap(),
                 ))
             })
             .map_err(|e| e.to_string())
