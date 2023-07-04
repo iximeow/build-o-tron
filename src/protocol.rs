@@ -11,6 +11,8 @@ pub enum ClientProto {
     Metric { name: String, value: String },
     Command(CommandInfo),
     TaskStatus(TaskInfo),
+    Ping,
+    Pong,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
