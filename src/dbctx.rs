@@ -532,7 +532,7 @@ impl DbCtx {
         let conn = self.conn.lock().unwrap();
 
         let mut pending_query = conn.prepare(sql::PENDING_RUNS).unwrap();
-        let mut runs = pending_query.query([]).unwrap();
+        let mut runs = pending_query.query([host_id]).unwrap();
         let mut pending = Vec::new();
 
         while let Some(row) = runs.next().unwrap() {
