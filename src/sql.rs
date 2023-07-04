@@ -142,7 +142,10 @@ pub const PENDING_RUNS: &'static str = "\
     select id, job_id, created_time, host_preference from runs where state=0 and (host_preference=?1 or host_preference is null) order by created_time desc;";
 
 pub const JOBS_NEEDING_HOST_RUN: &'static str = "\
-    select jobs.id, jobs.source, jobs.created_time, jobs.remote_id, jobs.commit_id, jobs.run_preferences from jobs left join runs on jobs.id=runs.job_id where jobs.run_preferences=\"all\" and (host_id!=?1 or host_id is null);";
+    select jobs.id, jobs.source, jobs.created_time, jobs.remote_id, jobs.commit_id, jobs.run_preferences from jobs\
+    where jobs.run_prefererences=\"all\"
+    and not exists\
+        (select 1 from runs r2 where r2.job_id = jobs.id and r2.host_id = ?1);";
 
 pub const ACTIVE_RUNS: &'static str = "\
     select id,
