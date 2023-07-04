@@ -669,7 +669,7 @@ impl DbCtx {
     pub fn host_model_info(&self, host_id: u64) -> Result<(String, String, String, String), String> {
         let conn = self.conn.lock().unwrap();
         conn
-            .query_row("select hostname, cpu_vendor_id, cpu_family, cpu_model from hosts;", [host_id], |row| {
+            .query_row("select hostname, cpu_vendor_id, cpu_family, cpu_model from hosts where id=?1;", [host_id], |row| {
                 Ok((
                     row.get(0).unwrap(),
                     row.get(1).unwrap(),
