@@ -60,30 +60,21 @@ fn reserve_artifacts_dir(run: u64) -> std::io::Result<PathBuf> {
 async fn activate_run(dbctx: Arc<DbCtx>, candidate: RunnerClient, job: &Job, run: &PendingRun) -> Result<(), String> {
     eprintln!("activating task {:?}", run);
 
-    let connection = dbctx.conn.lock().unwrap();
-
-    let (repo_id, remote_git_url): (u64, String) = connection
-        .query_row("select repo_id, remote_git_url from remotes where id=?1", [job.remote_id], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
-        .expect("query succeeds");
-    let repo_name: String = connection
-        .query_row("select repo_name from repos where id=?1", [repo_id], |row| row.get(0))
-        .expect("query succeeds");
-
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("now is before epoch")
         .as_millis();
 
-    let commit_sha: String = connection
-        .query_row("select sha from commits where id=?1", [job.commit_id], |row| row.get(0))
-        .expect("can run query");
-    std::mem::drop(connection);
+    let remote = dbctx.remote_by_id(job.remote_id).expect("query succeeds").expect("job has remote");
+    let repo = dbctx.repo_by_id(remote.repo_id).expect("query succeeds").expect("remote has repo");
+
+    let commit_sha = dbctx.commit_sha(job.commit_id).expect("query succeeds");
 
     let artifacts: PathBuf = reserve_artifacts_dir(run.id).expect("can reserve a directory for artifacts");
 
-    eprintln!("running {}", repo_name);
+    eprintln!("running {}", &repo.name);
 
-    let res = candidate.submit(&dbctx, &run, &remote_git_url, &commit_sha).await;
+    let res = candidate.submit(&dbctx, &run, &remote.remote_git_url, &commit_sha).await;
 
     let mut client_job = match res {
         Ok(Some(mut client_job)) => { client_job }
@@ -534,7 +525,9 @@ async fn main() {
 
         let dbctx = Arc::clone(&dbctx);
         spawn(async move {
-            find_client_task(dbctx, candidate);
+            let host_id = candidate.host_id;
+            let res = find_client_task(dbctx, candidate).await;
+            eprintln!("task client for {}: {:?}", host_id, res);
         });
     }
 }
