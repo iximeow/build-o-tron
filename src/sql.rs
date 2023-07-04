@@ -61,7 +61,8 @@ pub const CREATE_JOBS_TABLE: &'static str = "\
         source TEXT,
         created_time INTEGER,
         remote_id INTEGER,
-        commit_id INTEGER);";
+        commit_id INTEGER,
+        run_preferences TEXT);";
 
 pub const CREATE_METRICS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS metrics (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +77,8 @@ pub const CREATE_COMMITS_TABLE: &'static str = "\
 
 pub const CREATE_REPOS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS repos (id INTEGER PRIMARY KEY AUTOINCREMENT,
-        repo_name TEXT);";
+        repo_name TEXT,
+        default_run_preference TEXT);";
 
 // remote_api is `github` or NULL for now. hopefully a future cgit-style notifier one day.
 // remote_path is some unique identifier for the relevant remote.
@@ -137,7 +139,10 @@ pub const CREATE_REPO_NAME_INDEX: &'static str = "\
     CREATE UNIQUE INDEX IF NOT EXISTS 'repo_names' ON repos(repo_name);";
 
 pub const PENDING_RUNS: &'static str = "\
-    select id, job_id, created_time from runs where state=0;";
+    select id, job_id, created_time, host_preference from runs where state=0 and (host_preference=?1 or host_preference is null) order by created_time desc;";
+
+pub const JOBS_NEEDING_HOST_RUN: &'static str = "\
+    select jobs.id, jobs.source, jobs.created_time, jobs.remote_id, jobs.commit_id, jobs.run_preferences from jobs left join runs on jobs.id=runs.job_id where jobs.run_preferences=\"all\" and (host_id!=?1 or host_id is null);";
 
 pub const ACTIVE_RUNS: &'static str = "\
     select id,
@@ -157,13 +162,13 @@ pub const LAST_ARTIFACTS_FOR_RUN: &'static str = "\
     select * from artifacts where run_id=?1 and (name like \"%(stderr)%\" or name like \"%(stdout)%\") order by id desc limit ?2;";
 
 pub const JOB_BY_COMMIT_ID: &'static str = "\
-    select id, source, created_time, remote_id, commit_id from jobs where commit_id=?1;";
+    select id, source, created_time, remote_id, commit_id, run_preferences from jobs where commit_id=?1;";
 
 pub const ARTIFACT_BY_ID: &'static str = "\
     select * from artifacts where id=?1 and run_id=?2;";
 
 pub const JOB_BY_ID: &'static str = "\
-    select id, source, created_time, remote_id, commit_id from jobs where id=?1";
+    select id, source, created_time, remote_id, commit_id, run_preferences from jobs where id=?1";
 
 pub const METRICS_FOR_RUN: &'static str = "\
     select * from metrics where run_id=?1 order by id asc;";
@@ -175,10 +180,10 @@ pub const REMOTES_FOR_REPO: &'static str = "\
     select * from remotes where repo_id=?1;";
 
 pub const ALL_REPOS: &'static str = "\
-    select * from repos;";
+    select id, repo_name, default_run_preference from repos;";
 
 pub const LAST_JOBS_FROM_REMOTE: &'static str = "\
-    select id, source, created_time, remote_id, commit_id from jobs where remote_id=?1 order by created_time desc limit ?2;";
+    select id, source, created_time, remote_id, commit_id, run_preferences from jobs where remote_id=?1 order by created_time desc limit ?2;";
 
 pub const LAST_RUN_FOR_JOB: &'static str = "\
     select id,
@@ -195,6 +200,6 @@ pub const LAST_RUN_FOR_JOB: &'static str = "\
         final_status from runs where job_id=?1 order by started_time desc limit 1;";
 
 pub const SELECT_ALL_RUNS_WITH_JOB_INFO: &'static str = "\
-    select jobs.id as job_id, runs.id as run_id, runs.state, runs.created_time, jobs.commit_id
+    select jobs.id as job_id, runs.id as run_id, runs.state, runs.created_time, jobs.commit_id, jobs.run_preferences
     from jobs join runs on jobs.id=runs.job_id
     oder by runs.created_time asc;";

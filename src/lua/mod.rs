@@ -152,6 +152,21 @@ mod lua_exports {
         Ok(result)
     }
 
+    pub fn check_dependencies(commands: Vec<String>) -> Result<(), rlua::Error> {
+        let mut missing_deps = Vec::new();
+        for command in commands.iter() {
+            if !has_cmd(command)? {
+                missing_deps.push(command.clone());
+            }
+        }
+
+        if missing_deps.len() > 0 {
+            return Err(LuaError::RuntimeError(format!("missing dependencies: {}", missing_deps.join(", "))));
+        }
+
+        Ok(())
+    }
+
     pub fn metric(name: String, value: String, job_ctx: Arc<Mutex<RunningJob>>) -> Result<(), rlua::Error> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -283,6 +298,10 @@ impl BuildEnv {
             Ok(())
         })?;
 
+        let check_dependencies = decl_env.create_function("dependencies", move |_, job_ref, commands: Vec<String>| {
+            lua_exports::check_dependencies(commands)
+        })?;
+
         let build = decl_env.create_function("build", move |_, job_ref, (command, params): (LuaValue, LuaValue)| {
             lua_exports::build_command_impl(command, params, job_ref)
         })?;
@@ -337,6 +356,7 @@ impl BuildEnv {
             vec![
                 ("hello", hello),
                 ("run", build),
+                ("dependencies", check_dependencies),
                 ("metric", metric),
                 ("error", error),
                 ("artifact", artifact),

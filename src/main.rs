@@ -256,14 +256,21 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
         }
     };
 
+    let repo_default_run_pref: Option<String> = ctx.conn.lock().unwrap()
+        .query_row("select default_run_preference from repos where id=?1;", [repo_id], |row| {
+            Ok((row.get(0)).unwrap())
+        })
+        .optional()
+        .expect("can query");
+
     let pusher_email = pusher
         .get("email")
         .expect("has email")
         .as_str()
         .expect("is str");
 
-    let job_id = ctx.new_job(remote_id, &sha, Some(pusher_email)).unwrap();
-    let _ = ctx.new_run(job_id).unwrap();
+    let job_id = ctx.new_job(remote_id, &sha, Some(pusher_email), repo_default_run_pref).unwrap();
+    let _ = ctx.new_run(job_id, None).unwrap();
 
     let notifiers = ctx.notifiers_by_repo(repo_id).expect("can get notifiers");
 
@@ -714,8 +721,8 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
 
     let mut last_builds = Vec::new();
 
-    let (repo_id, repo_name): (u64, String) = match ctx.dbctx.conn.lock().unwrap()
-        .query_row("select id, repo_name from repos where repo_name=?1;", [&path], |row| Ok((row.get(0).unwrap(), row.get(1).unwrap())))
+    let (repo_id, repo_name, default_run_preference): (u64, String) = match ctx.dbctx.conn.lock().unwrap()
+        .query_row("select id, repo_name, default_run_preference from repos where repo_name=?1;", [&path], |row| Ok((row.get(0).unwrap(), row.get(1).unwrap(), row.get(2).unwrap())))
         .optional()
         .unwrap() {
         Some(elem) => elem,
@@ -724,6 +731,8 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
             return (StatusCode::NOT_FOUND, Html(String::new()));
         }
     };
+
+    // TODO: display default_run_preference somehow on the web summary?
 
     for remote in ctx.dbctx.remotes_by_repo(repo_id).expect("can get repo from a path") {
         let mut last_ten_jobs = ctx.dbctx.recent_jobs_from_remote(remote.id, 10).expect("can look up jobs for a repo");

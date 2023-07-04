@@ -85,22 +85,27 @@ fn main() {
                     let mut query = conn.prepare(crate::sql::SELECT_ALL_RUNS_WITH_JOB_INFO).unwrap();
                     let mut jobs = query.query([]).unwrap();
                     while let Some(row) = jobs.next().unwrap() {
-                        let (job_id, run_id, state, created_time, commit_id): (u64, u64, u64, u64, u64) = row.try_into().unwrap();
+                        let (job_id, run_id, state, created_time, commit_id, run_preferences): (u64, u64, u64, u64, u64, Option<String>) = row.try_into().unwrap();
 
-                        eprintln!("[+] {:04} ({:04}) | {: >8?} | {} | {}", run_id, job_id, state, created_time, commit_id);
+                        eprint!("[+] {:04} ({:04}) | {: >8?} | {} | {}", run_id, job_id, state, created_time, commit_id);
+                        if let Some(run_preferences) = run_preferences {
+                            eprintln!(" | run preference: {}", run_preferences);
+                        } else {
+                            eprintln!("");
+                        }
                     }
                     eprintln!("jobs");
                 },
                 JobAction::Rerun { which } => {
                     let db = DbCtx::new(&config_path, &db_path);
-                    let task_id = db.new_run(which as u64).expect("db can be queried");
+                    let task_id = db.new_run(which as u64, None).expect("db can be queried").id;
                     eprintln!("[+] rerunning job {} as task {}", which, task_id);
                 }
                 JobAction::RerunCommit { commit } => {
                     let db = DbCtx::new(&config_path, &db_path);
                     let job_id = db.job_for_commit(&commit).unwrap();
                     if let Some(job_id) = job_id {
-                        let task_id = db.new_run(job_id).expect("db can be queried");
+                        let task_id = db.new_run(job_id, None).expect("db can be queried").id;
                         eprintln!("[+] rerunning job {} (commit {}) as task {}", job_id, commit, task_id);
                     } else {
                         eprintln!("[-] no job for commit {}", commit);
