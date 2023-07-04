@@ -144,9 +144,9 @@ pub const PENDING_RUNS: &'static str = "\
 
 pub const JOBS_NEEDING_HOST_RUN: &'static str = "\
     select jobs.id, jobs.source, jobs.created_time, jobs.remote_id, jobs.commit_id, jobs.run_preferences from jobs \
-    where jobs.run_preferences=\"all\" \
+    where jobs.run_preferences=\"all\" and jobs.created_time > ?1 \
     and not exists \
-        (select 1 from runs r2 where r2.job_id = jobs.id and r2.host_id = ?1);";
+        (select 1 from runs r2 where r2.job_id = jobs.id and r2.host_id = ?2);";
 
 pub const ACTIVE_RUNS: &'static str = "\
     select id,

@@ -549,10 +549,18 @@ impl DbCtx {
     }
 
     pub fn jobs_needing_task_runs_for_host(&self, host_id: u64) -> Result<Vec<Job>, String> {
+        // for jobs that this host has not run, we'll arbitrarily say that we won't generate new
+        // runs for jobs more than a day old.
+        //
+        // we don't want to rebuild the entire history every time we see a new host by default; if
+        // you really want to rebuild all of history on a new host, use `ci_ctl` to prepare the
+        // runs.
+        let cutoff = crate::io::now_ms() - 24 * 3600 * 1000;
+
         let conn = self.conn.lock().unwrap();
 
         let mut jobs_needing_task_runs = conn.prepare(sql::JOBS_NEEDING_HOST_RUN).unwrap();
-        let mut job_rows = jobs_needing_task_runs.query([host_id]).unwrap();
+        let mut job_rows = jobs_needing_task_runs.query([cutoff, host_id]).unwrap();
         let mut jobs = Vec::new();
 
         while let Some(row) = job_rows.next().unwrap() {
