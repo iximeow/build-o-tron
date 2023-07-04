@@ -556,7 +556,10 @@ mod host_info {
                 let cpu_mhzes: Vec<&String> = cpu_lines.iter().filter(|line| line.starts_with("cpu MHz")).collect();
                 match cpu_mhzes.get(cpu as usize) {
                     Some(mhz) => {
-                        let mhz: f64 = cpu_mhzes[cpu as usize].trim().parse().unwrap();
+                        let mut line_parts = cpu_mhzes[cpu as usize].split(":");
+                        let _ = line_parts.next();
+                        let mhz = line_parts.next().unwrap().trim();
+                        let mhz: f64 = mhz.parse().unwrap();
                         Ok((mhz * 1000.0) as u64)
                     },
                     None => {
