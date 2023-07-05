@@ -365,6 +365,8 @@ impl BuildEnv {
             ]
         ).unwrap();
         build_functions.set("environment", build_environment).unwrap();
+        let current_commit = self.job.lock().unwrap().job.commit.clone();
+        build_functions.set("sha", lua_ctx.create_string(current_commit.as_bytes()).unwrap()).unwrap();
         let globals = lua_ctx.globals();
         globals.set("Build", build_functions).unwrap();
 
