@@ -51,6 +51,11 @@ enum JobAction {
     },
     RerunCommit {
         commit: String
+    },
+    Create {
+        repo: String,
+        commit: String,
+        pusher_email: String,
     }
 }
 
@@ -110,6 +115,27 @@ fn main() {
                     } else {
                         eprintln!("[-] no job for commit {}", commit);
                     }
+                }
+                JobAction::Create { repo, commit, pusher_email } => {
+                    let db = DbCtx::new(&config_path, &db_path);
+                    let parts = repo.split(":").collect::<Vec<&str>>();
+                    let (remote_kind, repo_path) = (parts[0], parts[1]);
+                    let remote = match db.remote_by_path_and_api(&remote_kind, &repo_path).expect("can query") {
+                        Some(remote) => remote,
+                        None => {
+                            eprintln!("[-] no remote registered as {}:{}", remote_kind, repo_path);
+                            return;
+                        }
+                    };
+
+                    let repo_default_run_pref: Option<String> = db.conn.lock().unwrap()
+                        .query_row("select default_run_preference from repos where id=?1;", [remote.repo_id], |row| {
+                            Ok((row.get(0)).unwrap())
+                        })
+                        .expect("can query");
+
+                    let job_id = db.new_job(remote.id, &commit, Some(&pusher_email), repo_default_run_pref).expect("can create");
+                    let _ = db.new_run(job_id, None).unwrap();
                 }
             }
         },
