@@ -1,0 +1,13 @@
+[package]
+name = "ci-lib-core"
+version = "0.0.1"
+authors = [ "iximeow <me@iximeow.net>" ]
+license = "0BSD"
+edition = "2021"
+description = "shared code across the ci project that is applicable for all targets"
+
+[lib]
+
+[dependencies]
+serde = { version = "*", features = ["derive"] }
+rusqlite = { version = "*", features = ["bundled"] }

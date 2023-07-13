@@ -1,0 +1,20 @@
+[package]
+name = "ci-lib-native"
+version = "0.0.1"
+authors = [ "iximeow <me@iximeow.net>" ]
+license = "0BSD"
+edition = "2021"
+description = "shared code across the ci project that is applicable for native targets (uses tokio, etc)"
+
+[lib]
+
+[dependencies]
+ci-lib-core = { path = "../ci-lib-core" }
+tokio = { version = "*", features = ["full"] }
+futures-util = "*"
+axum = "*"
+hyper = "*"
+serde_json = "*"
+serde = { version = "*", features = ["derive"] }
+lettre = "*"
+reqwest = "*"

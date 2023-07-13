@@ -5,7 +5,7 @@ use rlua::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 
-pub const DEFAULT_RUST_GOODFILE: &'static [u8] = include_bytes!("../../config/goodfiles/rust.lua");
+pub const DEFAULT_RUST_GOODFILE: &'static [u8] = include_bytes!("../../../config/goodfiles/rust.lua");
 
 pub struct BuildEnv {
     lua: Lua,
@@ -314,7 +314,7 @@ impl BuildEnv {
             lua_exports::metric(name, value, job_ref)
         })?;
 
-        let now_ms = decl_env.create_function("now_ms", move |_, job_ref, ()| Ok(crate::io::now_ms()))?;
+        let now_ms = decl_env.create_function("now_ms", move |_, job_ref, ()| Ok(ci_lib_core::now_ms()))?;
 
         let artifact = decl_env.create_function("artifact", move |_, job_ref, (path, name): (String, Option<String>)| {
             lua_exports::artifact(path, name, job_ref)

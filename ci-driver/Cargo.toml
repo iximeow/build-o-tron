@@ -1,0 +1,30 @@
+[package]
+name = "ci-driver"
+version = "0.0.1"
+authors = [ "iximeow <me@iximeow.net>" ]
+license = "0BSD"
+edition = "2021"
+
+[[bin]]
+name = "ci_driver"
+path = "src/main.rs"
+
+[dependencies]
+ci-lib-core = { path = "../ci-lib-core" }
+ci-lib-native = { path = "../ci-lib-native" }
+
+axum = { version = "*" }
+axum-extra = { version = "*", features = ["async-read-body"] }
+axum-server = { version = "*", features = ["tls-rustls"] }
+axum-macros = "*"
+serde_json = "*"
+serde = { version = "*", features = ["derive"] }
+base64 = "*"
+tokio = { version = "*", features = ["full"] }
+tokio-stream = "*"
+tracing-subscriber = "*"
+hyper = "*"
+futures-util = "*"
+lazy_static = "*"
+lettre = "*"
+reqwest = "*"

@@ -1,13 +1,7 @@
 use clap::{Parser, Subcommand};
 
-mod sql;
-mod dbctx;
-mod notifier;
-mod io;
-mod protocol;
-
-use dbctx::DbCtx;
-use notifier::NotifierConfig;
+use ci_lib_core::dbctx::DbCtx;
+use ci_lib_native::notifier::NotifierConfig;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -87,7 +81,7 @@ fn main() {
                 JobAction::List => {
                     let db = DbCtx::new(&config_path, &db_path);
                     let mut conn = db.conn.lock().unwrap();
-                    let mut query = conn.prepare(crate::sql::SELECT_ALL_RUNS_WITH_JOB_INFO).unwrap();
+                    let mut query = conn.prepare(ci_lib_core::sql::SELECT_ALL_RUNS_WITH_JOB_INFO).unwrap();
                     let mut jobs = query.query([]).unwrap();
                     while let Some(row) = jobs.next().unwrap() {
                         let (job_id, run_id, state, created_time, commit_id, run_preferences): (u64, u64, u64, u64, u64, Option<String>) = row.try_into().unwrap();

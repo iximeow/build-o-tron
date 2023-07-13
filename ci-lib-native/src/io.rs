@@ -8,13 +8,6 @@ use std::pin::Pin;
 use std::time::{UNIX_EPOCH, SystemTime};
 use std::sync::{Arc, Mutex};
 
-pub fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("now is later than epoch")
-        .as_millis() as u64
-}
-
 #[derive(Clone)]
 pub struct VecSink {
     body: Arc<Mutex<Vec<u8>>>,

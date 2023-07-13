@@ -6,7 +6,7 @@ use chrono::{Utc, TimeZone};
 use lazy_static::lazy_static;
 use std::sync::RwLock;
 use std::collections::HashMap;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use tokio::spawn;
 use std::path::PathBuf;
 use axum_server::tls_rustls::RustlsConfig;
@@ -31,15 +31,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-mod io;
-mod sql;
-mod notifier;
-mod dbctx;
-mod protocol;
+// mod protocol;
 
-use sql::RunState;
+use ci_lib_core::sql::RunState;
 
-use dbctx::{DbCtx, Job, Run, ArtifactRecord};
+use ci_lib_core::dbctx::DbCtx;
+use ci_lib_core::sql::{ArtifactRecord, Job, Run};
 
 use rusqlite::OptionalExtension;
 
@@ -156,7 +153,7 @@ fn display_run_time(run: &Run) -> String {
                 if run.state == RunState::Started {
                     // this run has been restarted. the completed time is stale.
                     // further, this is a currently active run.
-                    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
+                    let now_ms = ci_lib_core::now_ms();
                     let mut duration = duration_as_human_string(now_ms - start_time);
                     duration.push_str(" (ongoing)");
                     duration
@@ -170,7 +167,7 @@ fn display_run_time(run: &Run) -> String {
             }
         } else {
             if run.state != RunState::Invalid {
-                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).expect("now is after then").as_millis() as u64;
+                let now_ms = ci_lib_core::now_ms();
                 let mut duration = duration_as_human_string(now_ms - start_time);
                 duration.push_str(" (ongoing)");
                 duration
@@ -235,7 +232,7 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
     // * create a new commit ref
     // * create a new job (state=pending) for the commit ref
     let commit_id: Option<u64> = ctx.conn.lock().unwrap()
-        .query_row(sql::COMMIT_TO_ID, [sha.clone()], |row| row.get(0))
+        .query_row(ci_lib_core::sql::COMMIT_TO_ID, [sha.clone()], |row| row.get(0))
         .optional()
         .expect("can run query");
 
@@ -272,7 +269,7 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
     let job_id = ctx.new_job(remote_id, &sha, Some(pusher_email), repo_default_run_pref).unwrap();
     let _ = ctx.new_run(job_id, None).unwrap();
 
-    let notifiers = ctx.notifiers_by_repo(repo_id).expect("can get notifiers");
+    let notifiers = ci_lib_native::dbctx_ext::notifiers_by_repo(&ctx, repo_id).expect("can get notifiers");
 
     for notifier in notifiers {
         notifier.tell_pending_job(&ctx, repo_id, &sha, job_id).await.expect("can notify");
@@ -516,7 +513,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
 
     let run = ctx.dbctx.last_run_for_job(job.id).expect("can query").expect("run exists");
 
-    let complete_time = run.complete_time.unwrap_or_else(crate::io::now_ms);
+    let complete_time = run.complete_time.unwrap_or_else(ci_lib_core::now_ms);
 
     let (status_elem, status_desc) = match run.state {
         RunState::Pending | RunState::Started => {
@@ -575,13 +572,13 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     let mut artifacts_fragment = String::new();
     let mut artifacts: Vec<ArtifactRecord> = ctx.dbctx.artifacts_for_run(run.id, None).unwrap()
         .into_iter() // HACK: filter out artifacts for previous runs of a run. artifacts should be attached to a run, runs should be distinct from run. but i'm sleepy.
-        .filter(|artifact| artifact.created_time >= run.start_time.unwrap_or_else(crate::io::now_ms))
+        .filter(|artifact| artifact.created_time >= run.start_time.unwrap_or_else(ci_lib_core::now_ms))
         .collect();
 
     artifacts.sort_by_key(|artifact| artifact.created_time);
 
     fn diff_times(run_completed: u64, artifact_completed: Option<u64>) -> u64 {
-        let artifact_completed = artifact_completed.unwrap_or_else(crate::io::now_ms);
+        let artifact_completed = artifact_completed.unwrap_or_else(ci_lib_core::now_ms);
         let run_completed = std::cmp::max(run_completed, artifact_completed);
         run_completed - artifact_completed
     }
@@ -592,7 +589,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     for artifact in old_artifacts.iter() {
         let created_time_str = Utc.timestamp_millis_opt(artifact.created_time as i64).unwrap().to_rfc2822();
         artifacts_fragment.push_str(&format!("<div><pre style='display:inline;'>{}</pre> step: <pre style='display:inline;'>{}</pre></div>\n", created_time_str, &artifact.name));
-        let duration_str = duration_as_human_string(artifact.completed_time.unwrap_or_else(crate::io::now_ms) - artifact.created_time);
+        let duration_str = duration_as_human_string(artifact.completed_time.unwrap_or_else(ci_lib_core::now_ms) - artifact.created_time);
         let size_str = (std::fs::metadata(&format!("./artifacts/{}/{}", artifact.run_id, artifact.id)).expect("metadata exists").len() / 1024).to_string();
         artifacts_fragment.push_str(&format!("<pre>  {}kb in {} </pre>\n", size_str, duration_str));
     }
@@ -605,7 +602,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
             artifacts_fragment.push_str(&std::fs::read_to_string(format!("./artifacts/{}/{}", artifact.run_id, artifact.id)).unwrap());
             artifacts_fragment.push_str("</pre>\n");
         } else {
-            let duration_str = duration_as_human_string(artifact.completed_time.unwrap_or_else(crate::io::now_ms) - artifact.created_time);
+            let duration_str = duration_as_human_string(artifact.completed_time.unwrap_or_else(ci_lib_core::now_ms) - artifact.created_time);
             let size_str = std::fs::metadata(&format!("./artifacts/{}/{}", artifact.run_id, artifact.id)).map(|md| {
                 (md.len() / 1024).to_string()
             }).unwrap_or_else(|e| format!("[{}]", e));
@@ -756,7 +753,7 @@ async fn handle_get_artifact(Path(path): Path<(String, String)>, State(ctx): Sta
                 .await
                 .expect("artifact file exists?");
             while artifact.completed_time.is_none() {
-                match crate::io::forward_data(&mut artifact_file, &mut tx_sender).await {
+                match ci_lib_native::io::forward_data(&mut artifact_file, &mut tx_sender).await {
                     Ok(()) => {
                         // reached the current EOF, wait and then commit an unspeakable sin
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;

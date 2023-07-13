@@ -1,15 +1,22 @@
 use std::sync::Mutex;
-use futures_util::StreamExt;
+// use futures_util::StreamExt;
 use rusqlite::{Connection, OptionalExtension};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+// use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::path::Path;
 use std::path::PathBuf;
+use std::ops::Deref;
 
-use crate::io::ArtifactDescriptor;
-use crate::notifier::{RemoteNotifier, NotifierConfig};
 use crate::sql;
+
+use crate::sql::ArtifactRecord;
+use crate::sql::Run;
+use crate::sql::TokenValidity;
+use crate::sql::MetricRecord;
+use crate::sql::PendingRun;
+use crate::sql::Job;
+use crate::sql::Remote;
+use crate::sql::Repo;
 
 const TOKEN_EXPIRY_MS: u64 = 1000 * 60 * 30;
 
@@ -19,103 +26,16 @@ pub struct DbCtx {
     pub conn: Mutex<Connection>,
 }
 
-#[derive(Debug, Clone)]
-pub struct Repo {
-    pub id: u64,
-    pub name: String,
-    pub default_run_preference: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct Remote {
-    pub id: u64,
-    pub repo_id: u64,
-    pub remote_path: String,
-    pub remote_api: String,
-    pub remote_url: String,
-    pub remote_git_url: String,
-    pub notifier_config_path: String,
-}
-
-// a job tracks when we became aware of a commit from remote. typically a job will have a 1-1
-// relationship with commits, and potentially many *runs* of that job.
-#[derive(Debug, Clone)]
-pub struct Job {
-    pub id: u64,
-    pub remote_id: u64,
-    pub commit_id: u64,
-    pub created_time: u64,
-    pub source: Option<String>,
-    pub run_preferences: Option<String>,
-}
-
-// a run tracks the intent or obligation to have some runner somewhere run a goodfile and report
-// results. a job may have many runs from many different hosts rebuliding history, or reruns of the
-// same job on the same hardware to collect more datapoints on the operation.
-#[derive(Debug, Clone)]
-pub struct Run {
-    pub id: u64,
-    pub job_id: u64,
-    pub artifacts_path: Option<String>,
-    pub state: sql::RunState,
-    pub host_id: Option<u64>,
-    pub create_time: u64,
-    pub start_time: Option<u64>,
-    pub complete_time: Option<u64>,
-    pub build_token: Option<String>,
-    pub run_timeout: Option<u64>,
-    pub build_result: Option<u8>,
-    pub final_text: Option<String>,
-}
-
-impl Run {
-    fn into_pending_run(self) -> PendingRun {
-        PendingRun {
-            id: self.id,
-            job_id: self.job_id,
-            create_time: self.create_time,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PendingRun {
-    pub id: u64,
-    pub job_id: u64,
-    pub create_time: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenValidity {
-    Expired,
-    Invalid,
-    Valid,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MetricRecord {
-    pub id: u64,
-    pub run_id: u64,
-    pub name: String,
-    pub value: String
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ArtifactRecord {
-    pub id: u64,
-    pub run_id: u64,
-    pub name: String,
-    pub desc: String,
-    pub created_time: u64,
-    pub completed_time: Option<u64>,
-}
-
 impl DbCtx {
     pub fn new<P: AsRef<Path>>(config_path: P, db_path: P) -> Self {
         DbCtx {
             config_path: config_path.as_ref().to_owned(),
             conn: Mutex::new(Connection::open(db_path).unwrap())
         }
+    }
+
+    fn conn<'a>(&'a self) -> impl Deref<Target = Connection> + 'a {
+        self.conn.lock().unwrap()
     }
 
     pub fn create_tables(&self) -> Result<(), ()> {
@@ -176,34 +96,12 @@ impl DbCtx {
         conn
             .execute(
                 "update artifacts set completed_time=?1 where id=?2",
-                (crate::io::now_ms(), artifact_id)
+                (crate::now_ms(), artifact_id)
             )
             .map(|_| ())
             .map_err(|e| {
                 format!("{:?}", e)
             })
-    }
-
-    pub async fn reserve_artifact(&self, run_id: u64, name: &str, desc: &str) -> Result<ArtifactDescriptor, String> {
-        let artifact_id = {
-            let created_time = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("now is before epoch")
-                .as_millis() as u64;
-            let conn = self.conn.lock().unwrap();
-            conn
-                .execute(
-                    "insert into artifacts (run_id, name, desc, created_time) values (?1, ?2, ?3, ?4)",
-                    (run_id, name, desc, created_time)
-                )
-                .map_err(|e| {
-                    format!("{:?}", e)
-                })?;
-
-            conn.last_insert_rowid() as u64
-        };
-
-        ArtifactDescriptor::new(run_id, artifact_id).await
     }
 
     pub fn lookup_artifact(&self, run_id: u64, artifact_id: u64) -> Result<Option<ArtifactRecord>, String> {
@@ -253,14 +151,11 @@ impl DbCtx {
                     let timeout: Option<u64> = row.get(3).unwrap();
                     let timeout = timeout.unwrap_or(TOKEN_EXPIRY_MS);
 
-                    let now = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("now is before epoch")
-                        .as_millis();
+                    let now = crate::now_ms();
 
                     let time: Option<u64> = row.get(2).unwrap();
                     let validity = if let Some(time) = time {
-                        if now > time as u128 + timeout as u128 {
+                        if now > time + timeout {
                             TokenValidity::Expired
                         } else {
                             TokenValidity::Valid
@@ -536,7 +431,7 @@ impl DbCtx {
         let mut started = Vec::new();
 
         while let Some(row) = runs.next().unwrap() {
-            started.push(crate::sql::row2run(row));
+            started.push(Self::row2run(row));
         }
 
         Ok(started)
@@ -569,7 +464,7 @@ impl DbCtx {
         // we don't want to rebuild the entire history every time we see a new host by default; if
         // you really want to rebuild all of history on a new host, use `ci_ctl` to prepare the
         // runs.
-        let cutoff = crate::io::now_ms() - 24 * 3600 * 1000;
+        let cutoff = crate::now_ms() - 24 * 3600 * 1000;
 
         let conn = self.conn.lock().unwrap();
 
@@ -714,7 +609,7 @@ impl DbCtx {
         let mut results = Vec::new();
 
         while let Some(row) = runs_results.next().unwrap() {
-            results.push(crate::sql::row2run(row));
+            results.push(Self::row2run(row));
         }
 
         Ok(results)
@@ -725,48 +620,28 @@ impl DbCtx {
 
         conn
             .query_row(sql::LAST_RUN_FOR_JOB, [job_id], |row| {
-                Ok(crate::sql::row2run(row))
+                Ok(Self::row2run(row))
             })
             .optional()
             .map_err(|e| e.to_string())
     }
 
-    pub fn notifiers_by_repo(&self, repo_id: u64) -> Result<Vec<RemoteNotifier>, String> {
-        let remotes = self.remotes_by_repo(repo_id)?;
-
-        let mut notifiers: Vec<RemoteNotifier> = Vec::new();
-
-        for remote in remotes.into_iter() {
-            match remote.remote_api.as_str() {
-                "github" => {
-                    let mut notifier_path = self.config_path.clone();
-                    notifier_path.push(&remote.notifier_config_path);
-
-                    let notifier = RemoteNotifier {
-                        remote_path: remote.remote_path,
-                        notifier: NotifierConfig::github_from_file(&notifier_path)
-                            .expect("can load notifier config")
-                    };
-                    notifiers.push(notifier);
-                },
-                "email" => {
-                    let mut notifier_path = self.config_path.clone();
-                    notifier_path.push(&remote.notifier_config_path);
-
-                    let notifier = RemoteNotifier {
-                        remote_path: remote.remote_path,
-                        notifier: NotifierConfig::email_from_file(&notifier_path)
-                            .expect("can load notifier config")
-                    };
-                    notifiers.push(notifier);
-                }
-                other => {
-                    eprintln!("unknown remote api kind: {:?}, remote is {:?}", other, &remote)
-                }
-            }
+    pub(crate) fn row2run(row: &rusqlite::Row) -> Run {
+        let (id, job_id, artifacts_path, state, host_id, build_token, create_time, start_time, complete_time, run_timeout, build_result, final_text) = row.try_into().unwrap();
+        let state: u8 = state;
+        Run {
+            id,
+            job_id,
+            artifacts_path,
+            state: state.try_into().unwrap(),
+            host_id,
+            create_time,
+            start_time,
+            complete_time,
+            build_token,
+            run_timeout,
+            build_result,
+            final_text,
         }
-
-        Ok(notifiers)
     }
 }
-

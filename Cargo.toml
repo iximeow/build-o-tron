@@ -5,6 +5,21 @@ authors = [ "iximeow <me@iximeow.net>" ]
 license = "0BSD"
 edition = "2021"
 
+[lib]
+
+[workspace]
+members = [
+  "ci-lib-core",
+  "ci-lib-native",
+  "ci-runner",
+  "ci-driver",
+  "ci-web-server",
+  "ci-ctl",
+]
+exclude = [
+  "ci-wasm-frontend"
+]
+
 [dependencies]
 lazy_static = "*"
 axum = { version = "*" }
@@ -37,19 +52,3 @@ reqwest = { version = "*", features = ["rustls-tls-native-roots"] }
 clap = { version = "*", features = ["derive"] }
 rlua = "*"
 chrono = "*"
-
-[[bin]]
-name = "ci_webserver"
-path = "src/main.rs"
-
-[[bin]]
-name = "ci_driver"
-path = "src/ci_driver.rs"
-
-[[bin]]
-name = "ci_ctl"
-path = "src/ci_ctl.rs"
-
-[[bin]]
-name = "ci_runner"
-path = "src/ci_runner.rs"

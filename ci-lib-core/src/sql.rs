@@ -2,8 +2,96 @@
 
 use std::convert::TryFrom;
 
-use crate::dbctx::Run;
-use crate::dbctx::Job;
+#[derive(Debug, Clone)]
+pub struct PendingRun {
+    pub id: u64,
+    pub job_id: u64,
+    pub create_time: u64,
+}
+
+impl Run {
+    fn into_pending_run(self) -> PendingRun {
+        PendingRun {
+            id: self.id,
+            job_id: self.job_id,
+            create_time: self.create_time,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenValidity {
+    Expired,
+    Invalid,
+    Valid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetricRecord {
+    pub id: u64,
+    pub run_id: u64,
+    pub name: String,
+    pub value: String
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactRecord {
+    pub id: u64,
+    pub run_id: u64,
+    pub name: String,
+    pub desc: String,
+    pub created_time: u64,
+    pub completed_time: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Repo {
+    pub id: u64,
+    pub name: String,
+    pub default_run_preference: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct Remote {
+    pub id: u64,
+    pub repo_id: u64,
+    pub remote_path: String,
+    pub remote_api: String,
+    pub remote_url: String,
+    pub remote_git_url: String,
+    pub notifier_config_path: String,
+}
+
+// a job tracks when we became aware of a commit from remote. typically a job will have a 1-1
+// relationship with commits, and potentially many *runs* of that job.
+#[derive(Debug, Clone)]
+pub struct Job {
+    pub id: u64,
+    pub remote_id: u64,
+    pub commit_id: u64,
+    pub created_time: u64,
+    pub source: Option<String>,
+    pub run_preferences: Option<String>,
+}
+
+// a run tracks the intent or obligation to have some runner somewhere run a goodfile and report
+// results. a job may have many runs from many different hosts rebuliding history, or reruns of the
+// same job on the same hardware to collect more datapoints on the operation.
+#[derive(Debug, Clone)]
+pub struct Run {
+    pub id: u64,
+    pub job_id: u64,
+    pub artifacts_path: Option<String>,
+    pub state: RunState,
+    pub host_id: Option<u64>,
+    pub create_time: u64,
+    pub start_time: Option<u64>,
+    pub complete_time: Option<u64>,
+    pub build_token: Option<String>,
+    pub run_timeout: Option<u64>,
+    pub build_result: Option<u8>,
+    pub final_text: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub enum JobResult {
@@ -35,6 +123,7 @@ impl TryFrom<u8> for RunState {
     }
 }
 
+/*
 pub(crate) fn row2run(row: &rusqlite::Row) -> Run {
     let (id, job_id, artifacts_path, state, host_id, build_token, create_time, start_time, complete_time, run_timeout, build_result, final_text) = row.try_into().unwrap();
     let state: u8 = state;
@@ -53,6 +142,7 @@ pub(crate) fn row2run(row: &rusqlite::Row) -> Run {
         final_text,
     }
 }
+*/
 
 // remote_id is the remote from which we were notified. this is necessary so we know which remote
 // to pull from to actually run the job.

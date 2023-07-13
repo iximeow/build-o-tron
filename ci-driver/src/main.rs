@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 use lazy_static::lazy_static;
 use std::io::Read;
-use serde_derive::{Deserialize, Serialize};
 use futures_util::StreamExt;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -23,17 +22,14 @@ use axum::response::IntoResponse;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use serde_json::json;
+use serde::{Deserialize, Serialize};
 
-mod dbctx;
-mod sql;
-mod notifier;
-mod io;
-mod protocol;
-
-use crate::dbctx::{DbCtx, PendingRun, Job, Run};
-use crate::sql::JobResult;
-use crate::sql::RunState;
-use crate::protocol::{ClientProto, CommandInfo, TaskInfo, RequestedJob};
+use ci_lib_core::dbctx::DbCtx;
+use ci_lib_core::sql;
+use ci_lib_core::sql::{PendingRun, Job, Run};
+use ci_lib_core::sql::JobResult;
+use ci_lib_core::sql::RunState;
+use ci_lib_core::protocol::{ClientProto, CommandInfo, TaskInfo, RequestedJob};
 
 lazy_static! {
     static ref AUTH_SECRET: RwLock<Option<String>> = RwLock::new(None);
@@ -173,7 +169,7 @@ impl ClientJob {
                     let job = self.dbctx.job_by_id(self.task.job_id).expect("can query").expect("job exists");
                     let repo_id = self.dbctx.repo_id_by_remote(job.remote_id).unwrap().expect("remote exists");
 
-                    for notifier in self.dbctx.notifiers_by_repo(repo_id).expect("can get notifiers") {
+                    for notifier in ci_lib_native::dbctx_ext::notifiers_by_repo(&self.dbctx, repo_id).expect("can get notifiers") {
                         if let Err(e) = notifier.tell_complete_job(&self.dbctx, repo_id, &self.sha, self.task.id, result.clone()).await {
                             eprintln!("could not notify {:?}: {:?}", notifier.remote_path, e);
                         }
@@ -354,7 +350,7 @@ async fn handle_artifact(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
         }
     };
 
-    if token_validity != dbctx::TokenValidity::Valid {
+    if token_validity != sql::TokenValidity::Valid {
         eprintln!("bad artifact post: headers: {:?}. token is not valid: {:?}", headers, token_validity);
         return (StatusCode::BAD_REQUEST, "").into_response();
     }
@@ -382,7 +378,7 @@ async fn handle_artifact(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
         }
     };
 
-    let mut artifact = match ctx.0.reserve_artifact(run, artifact_name, artifact_desc).await {
+    let mut artifact = match ci_lib_native::dbctx_ext::reserve_artifact(&ctx.0, run, artifact_name, artifact_desc).await {
         Ok(artifact) => artifact,
         Err(err) => {
             eprintln!("failure to reserve artifact: {:?}", err);
@@ -603,7 +599,7 @@ async fn old_task_reaper(dbctx: Arc<DbCtx>) {
     // period for clients that have accepted a job but for some reason we have not recorded them as
     // active (perhaps they are slow to ack somehow).
 
-    let stale_threshold = crate::io::now_ms() - 60_000;
+    let stale_threshold = ci_lib_core::now_ms() - 60_000;
 
     let stale_tasks: Vec<Run> = potentially_stale_tasks.into_iter().filter(|task| {
         match (task.state, task.start_time) {

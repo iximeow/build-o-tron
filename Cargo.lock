@@ -312,6 +312,103 @@ dependencies = [
 ]
 
 [[package]]
+name = "ci-ctl"
+version = "0.0.1"
+dependencies = [
+ "ci-lib-core",
+ "ci-lib-native",
+ "clap 4.0.29",
+]
+
+[[package]]
+name = "ci-driver"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "axum-extra",
+ "axum-macros",
+ "axum-server",
+ "base64",
+ "ci-lib-core",
+ "ci-lib-native",
+ "futures-util",
+ "hyper",
+ "lazy_static",
+ "lettre",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tracing-subscriber 0.3.16",
+]
+
+[[package]]
+name = "ci-lib-core"
+version = "0.0.1"
+dependencies = [
+ "rusqlite",
+ "serde",
+]
+
+[[package]]
+name = "ci-lib-native"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "ci-lib-core",
+ "futures-util",
+ "hyper",
+ "lettre",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "ci-runner"
+version = "0.0.1"
+dependencies = [
+ "ci-lib-core",
+ "ci-lib-native",
+ "hyper",
+ "libc",
+ "reqwest",
+ "rlua",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.16",
+]
+
+[[package]]
+name = "ci-web-server"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "axum-extra",
+ "axum-server",
+ "chrono",
+ "ci-lib-core",
+ "ci-lib-native",
+ "hex",
+ "hmac",
+ "http",
+ "http-body",
+ "lazy_static",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-stream",
+ "tracing-subscriber 0.3.16",
+]
+
+[[package]]
 name = "clap"
 version = "3.2.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1294,6 +1391,7 @@ version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29f835d03d717946d28b1d1ed632eb6f0e24a299388ee623d0c23118d3e8a7fa"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]

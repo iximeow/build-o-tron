@@ -1,4 +1,4 @@
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use axum::http::StatusCode;
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
@@ -8,7 +8,7 @@ use lettre::transport::smtp::client::{SmtpConnection, TlsParametersBuilder};
 use std::time::Duration;
 use std::path::Path;
 
-use crate::DbCtx;
+use ci_lib_core::dbctx::DbCtx;
 
 pub struct RemoteNotifier {
     pub remote_path: String,

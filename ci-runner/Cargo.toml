@@ -1,0 +1,25 @@
+[package]
+name = "ci-runner"
+version = "0.0.1"
+authors = [ "iximeow <me@iximeow.net>" ]
+license = "0BSD"
+edition = "2021"
+
+[[bin]]
+name = "ci_runner"
+path = "src/main.rs"
+
+[dependencies]
+ci-lib-core = { path = "../ci-lib-core" }
+ci-lib-native = { path = "../ci-lib-native" }
+
+libc = "*"
+serde = "*"
+serde_derive = "*"
+serde_json = "*"
+tokio = { version = "*", features = ["full"] }
+reqwest = "*"
+rlua = "*"
+hyper = "*"
+tracing = "*"
+tracing-subscriber = "*"

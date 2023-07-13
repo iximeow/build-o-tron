@@ -13,12 +13,12 @@ use std::task::{Context, Poll};
 use std::pin::Pin;
 use std::marker::Unpin;
 
-mod protocol;
-mod lua;
-mod io;
+use ci_lib_native::io;
+use ci_lib_native::io::{ArtifactStream, VecSink};
+use ci_lib_core::protocol::{ClientProto, CommandInfo, TaskInfo, RequestedJob};
 
-use crate::io::{ArtifactStream, VecSink};
-use crate::protocol::{ClientProto, CommandInfo, TaskInfo, RequestedJob};
+mod lua;
+
 use crate::lua::CommandOutput;
 
 #[derive(Debug)]
@@ -36,10 +36,10 @@ struct RunnerClient {
     current_job: Option<RequestedJob>,
 }
 
-impl RequestedJob {
-    pub fn into_running(self, client: RunnerClient) -> RunningJob {
-        RunningJob {
-            job: self,
+impl RunningJob {
+    fn from_job(job: RequestedJob, client: RunnerClient) -> Self {
+        Self {
+            job,
             client,
             current_step: StepTracker::new(),
         }
@@ -220,9 +220,9 @@ impl RunningJob {
         let mut child_stderr = child.stderr.take().unwrap();
 
         eprintln!("[.] '{}': forwarding stdout", name);
-        tokio::spawn(async move { crate::io::forward_data(&mut child_stdout, &mut stdout_reporter).await });
+        tokio::spawn(async move { io::forward_data(&mut child_stdout, &mut stdout_reporter).await });
         eprintln!("[.] '{}': forwarding stderr", name);
-        tokio::spawn(async move { crate::io::forward_data(&mut child_stderr, &mut stderr_reporter).await });
+        tokio::spawn(async move { io::forward_data(&mut child_stderr, &mut stderr_reporter).await });
 
         let res = child.wait().await
             .map_err(|e| format!("failed to wait? {:?}", e))?;
@@ -508,7 +508,7 @@ async fn main() {
 
                 eprintln!("doing {:?}", job);
 
-                let mut job = job.into_running(client);
+                let mut job = RunningJob::from_job(job, client);
                 job.run().await;
                 std::thread::sleep(Duration::from_millis(10000));
             },
@@ -530,7 +530,7 @@ async fn main() {
 }
 
 mod host_info {
-    use crate::protocol::{CpuInfo, EnvInfo, HostInfo, MemoryInfo};
+    use ci_lib_core::protocol::{CpuInfo, EnvInfo, HostInfo, MemoryInfo};
 
     // get host model name, microcode, and how many cores
     fn collect_cpu_info() -> CpuInfo {

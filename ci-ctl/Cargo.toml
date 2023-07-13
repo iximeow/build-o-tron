@@ -1,0 +1,15 @@
+[package]
+name = "ci-ctl"
+version = "0.0.1"
+authors = [ "iximeow <me@iximeow.net>" ]
+license = "0BSD"
+edition = "2021"
+
+[[bin]]
+name = "ci_ctl"
+path = "src/main.rs"
+
+[dependencies]
+ci-lib-core = { path = "../ci-lib-core" }
+ci-lib-native = { path = "../ci-lib-native" }
+clap = { version = "4", features = ["derive"] }
