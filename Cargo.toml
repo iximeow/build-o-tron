@@ -17,7 +17,10 @@ members = [
   "ci-ctl",
 ]
 exclude = [
-  "ci-wasm-frontend"
+  # wasm target should not be built for x86, so exclude it
+  "ci-wasm-frontend",
+  # and do not try treating builds of rust projects using cargo as a workspace item
+  "tmpdir",
 ]
 
 [dependencies]
