@@ -1,0 +1,15 @@
+[package]
+name = "ci-lib-web"
+version = "0.0.1"
+authors = [ "iximeow <me@iximeow.net>" ]
+license = "0BSD"
+edition = "2021"
+description = "shared code supporting web views of state.db"
+
+[lib]
+
+[dependencies]
+ci-lib-core = { path = "../ci-lib-core" }
+serde = { version = "*", features = ["derive"] }
+rusqlite = { version = "*", features = ["bundled"] }
+chrono = "*"

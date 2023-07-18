@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 // use futures_util::StreamExt;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::time::{SystemTime, UNIX_EPOCH};
 // use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::path::Path;
@@ -40,16 +40,16 @@ impl DbCtx {
 
     pub fn create_tables(&self) -> Result<(), ()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(sql::CREATE_ARTIFACTS_TABLE, ()).unwrap();
-        conn.execute(sql::CREATE_JOBS_TABLE, ()).unwrap();
-        conn.execute(sql::CREATE_METRICS_TABLE, ()).unwrap();
-        conn.execute(sql::CREATE_COMMITS_TABLE, ()).unwrap();
-        conn.execute(sql::CREATE_REPOS_TABLE, ()).unwrap();
-        conn.execute(sql::CREATE_REPO_NAME_INDEX, ()).unwrap();
-        conn.execute(sql::CREATE_REMOTES_TABLE, ()).unwrap();
-        conn.execute(sql::CREATE_REMOTES_INDEX, ()).unwrap();
-        conn.execute(sql::CREATE_RUNS_TABLE, ()).unwrap();
-        conn.execute(sql::CREATE_HOSTS_TABLE, ()).unwrap();
+        conn.execute(sql::CREATE_ARTIFACTS_TABLE, params![]).unwrap();
+        conn.execute(sql::CREATE_JOBS_TABLE, params![]).unwrap();
+        conn.execute(sql::CREATE_METRICS_TABLE, params![]).unwrap();
+        conn.execute(sql::CREATE_COMMITS_TABLE, params![]).unwrap();
+        conn.execute(sql::CREATE_REPOS_TABLE, params![]).unwrap();
+        conn.execute(sql::CREATE_REPO_NAME_INDEX, params![]).unwrap();
+        conn.execute(sql::CREATE_REMOTES_TABLE, params![]).unwrap();
+        conn.execute(sql::CREATE_REMOTES_INDEX, params![]).unwrap();
+        conn.execute(sql::CREATE_RUNS_TABLE, params![]).unwrap();
+        conn.execute(sql::CREATE_HOSTS_TABLE, params![]).unwrap();
 
         Ok(())
     }
@@ -59,7 +59,7 @@ impl DbCtx {
         conn
             .execute(
                 "insert into metrics (run_id, name, value) values (?1, ?2, ?3) on conflict (run_id, name) do update set value=excluded.value",
-                (run_id, name, value)
+                params![run_id, name, value]
             )
             .expect("can upsert");
         Ok(())
@@ -96,7 +96,7 @@ impl DbCtx {
         conn
             .execute(
                 "update artifacts set completed_time=?1 where id=?2",
-                (crate::now_ms(), artifact_id)
+                params![crate::now_ms(), artifact_id]
             )
             .map(|_| ())
             .map_err(|e| {
@@ -245,7 +245,7 @@ impl DbCtx {
         conn
             .execute(
                 "insert into remotes (repo_id, remote_path, remote_api, remote_url, remote_git_url, notifier_config_path) values (?1, ?2, ?3, ?4, ?5, ?6);",
-                (repo_id, remote_path, remote_api, remote_url, remote_git_url, config_path)
+                params![repo_id, remote_path, remote_api, remote_url, remote_git_url, config_path]
             )
             .expect("can insert");
 
@@ -267,7 +267,7 @@ impl DbCtx {
 
         let rows_modified = conn.execute(
             "insert into jobs (remote_id, commit_id, created_time, source, run_preferences) values (?1, ?2, ?3, ?4, ?5);",
-            (remote_id, commit_id, created_time, pusher, repo_default_run_pref)
+            params![remote_id, commit_id, created_time, pusher, repo_default_run_pref]
         ).unwrap();
 
         assert_eq!(1, rows_modified);
@@ -287,7 +287,7 @@ impl DbCtx {
 
         let rows_modified = conn.execute(
             "insert into runs (job_id, state, created_time, host_preference) values (?1, ?2, ?3, ?4);",
-            (job_id, crate::sql::RunState::Pending as u64, created_time, host_preference)
+            params![job_id, crate::sql::RunState::Pending as u64, created_time, host_preference]
         ).unwrap();
 
         assert_eq!(1, rows_modified);
@@ -511,7 +511,7 @@ impl DbCtx {
                     hostname=?1 and cpu_vendor_id=?2 and cpu_model_name=?3 and cpu_family=?4 and \
                     cpu_model=?5 and cpu_max_freq_khz=?6 and cpu_cores=?7 and mem_total=?8 and \
                     arch=?9);",
-                (
+                params![
                     &host_info.hostname,
                     &host_info.cpu_info.vendor_id,
                     &host_info.cpu_info.model_name,
@@ -521,7 +521,7 @@ impl DbCtx {
                     &host_info.cpu_info.cores,
                     &host_info.memory_info.total,
                     &host_info.env_info.arch,
-                ),
+                ],
                 |row| { row.get(0) }
             )
             .map_err(|e| e.to_string())
@@ -544,7 +544,7 @@ impl DbCtx {
                      ?5, ?6, ?7, ?8, \
                      ?9, ?10, ?11, ?12 \
                  );",
-                (
+                params![
                     &host_info.hostname,
                     &host_info.cpu_info.vendor_id,
                     &host_info.cpu_info.model_name,
@@ -557,7 +557,7 @@ impl DbCtx {
                     &host_info.env_info.arch,
                     &host_info.env_info.family,
                     &host_info.env_info.os,
-                )
+                ]
             )
             .expect("can insert");
 
@@ -567,7 +567,7 @@ impl DbCtx {
                     hostname=?1 and cpu_vendor_id=?2 and cpu_model_name=?3 and cpu_family=?4 and \
                     cpu_model=?5 and cpu_microcode=?6 and cpu_max_freq_khz=?7 and \
                     cpu_cores=?8 and mem_total=?9 and arch=?10 and family=?11 and os=?12;",
-                (
+                params![
                     &host_info.hostname,
                     &host_info.cpu_info.vendor_id,
                     &host_info.cpu_info.model_name,
@@ -580,7 +580,7 @@ impl DbCtx {
                     &host_info.env_info.arch,
                     &host_info.env_info.family,
                     &host_info.env_info.os,
-                ),
+                ],
                 |row| { row.get(0) }
             )
             .map_err(|e| e.to_string())

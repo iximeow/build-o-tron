@@ -367,6 +367,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ci-lib-web"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "ci-lib-core",
+ "rusqlite",
+ "serde",
+]
+
+[[package]]
 name = "ci-runner"
 version = "0.0.1"
 dependencies = [
@@ -394,6 +404,7 @@ dependencies = [
  "chrono",
  "ci-lib-core",
  "ci-lib-native",
+ "ci-lib-web",
  "hex",
  "hmac",
  "http",
