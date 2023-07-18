@@ -1,0 +1,25 @@
+[package]
+name = "ci-wasm-frontend"
+version = "0.0.1"
+authors = [ "iximeow <me@iximeow.net>" ]
+license = "0BSD"
+edition = "2021"
+
+[[bin]]
+name = "ci_wasm_frontend"
+path = "src/main.rs"
+
+[dependencies]
+fastly = "*"
+fastly-shared = "*"
+fastly-sys = "*"
+ci-lib-core = { path = "../ci-lib-core" }
+ci-lib-web = { path = "../ci-lib-web" }
+rusqlite = { version = "0.26", features = ["bundled", "wasm32-wasi-vfs"] }
+sqlite-vfs = "*"
+rand = "*"
+libc = "*"
+
+[patch.crates-io]
+rusqlite = { version = "0.26", git = "https://github.com/rkusa/rusqlite.git", branch = "wasi" }
+libsqlite3-sys = { version = "0.23", git = "https://github.com/rkusa/rusqlite.git", branch = "wasi" }

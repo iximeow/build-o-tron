@@ -1,0 +1,6 @@
+authors = ["<me@iximeow.net>"]
+description = ""
+language = "rust"
+manifest_version = 3
+name = "wasm frontend to ci.butactuallyin.space"
+service_id = "a09AEGRGz0sUBB7IyHpHx6"
