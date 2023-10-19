@@ -6,7 +6,7 @@ license = "0BSD"
 edition = "2021"
 
 [[bin]]
-name = "ci_wasm_frontend"
+name = "ci-wasm-frontend"
 path = "src/main.rs"
 
 [dependencies]
@@ -23,3 +23,6 @@ libc = "*"
 [patch.crates-io]
 rusqlite = { version = "0.26", git = "https://github.com/rkusa/rusqlite.git", branch = "wasi" }
 libsqlite3-sys = { version = "0.23", git = "https://github.com/rkusa/rusqlite.git", branch = "wasi" }
+
+[build.release]
+lto = "full"
