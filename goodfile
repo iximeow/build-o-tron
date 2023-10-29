@@ -3,8 +3,8 @@ then
   Build.error("i don't know i want to handle dependencies yet")
 end
 
-Build.run({"cargo", "build", "--bin", "ci_webserver"}, {step="build-webserver"})
-Build.run({"cargo", "build", "--bin", "ci_runner"}, {step="build-runner"})
-Build.run({"cargo", "build", "--bin", "ci_driver"}, {step="build-driver"})
-Build.run({"cargo", "build", "--bin", "ci_ctl"}, {step="build-ctl"})
+Build.run({"cargo", "build"}, {step="build-webserver", cwd="ci-web-server"})
+Build.run({"cargo", "build"}, {step="build-runner", cwd="ci-runner"})
+Build.run({"cargo", "build"}, {step="build-driver", cwd="ci-driver"})
+Build.run({"cargo", "build"}, {step="build-ctl", cwd="ci-ctl"})
 Build.run({"cargo", "build", "--workspace"}, {step="build-catchall"})
