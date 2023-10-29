@@ -380,6 +380,7 @@ dependencies = [
 name = "ci-runner"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "ci-lib-core",
  "ci-lib-native",
  "hyper",

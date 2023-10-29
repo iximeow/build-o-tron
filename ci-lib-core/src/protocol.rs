@@ -15,7 +15,7 @@ pub enum ClientProto {
     Pong,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "command_info")]
 #[serde(rename_all = "snake_case")]
 pub enum CommandInfo {
@@ -23,7 +23,7 @@ pub enum CommandInfo {
     Finished { exit_code: Option<i32>, id: u32 },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "task_info")]
 #[serde(rename_all = "snake_case")]
 pub enum TaskInfo {

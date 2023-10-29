@@ -13,6 +13,7 @@ path = "src/main.rs"
 ci-lib-core = { path = "../ci-lib-core" }
 ci-lib-native = { path = "../ci-lib-native" }
 
+async-trait = "*"
 libc = "*"
 serde = "*"
 serde_derive = "*"

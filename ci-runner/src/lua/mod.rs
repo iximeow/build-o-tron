@@ -1,3 +1,4 @@
+use crate::Runner;
 use crate::RunningJob;
 
 use rlua::prelude::*;
@@ -9,7 +10,7 @@ pub const DEFAULT_RUST_GOODFILE: &'static [u8] = include_bytes!("../../../config
 
 pub struct BuildEnv {
     lua: Lua,
-    job: Arc<Mutex<RunningJob>>,
+    job: Arc<Mutex<Box<RunningJob>>>,
 }
 
 #[derive(Debug)]
@@ -26,6 +27,7 @@ pub struct CommandOutput {
 }
 
 mod lua_exports {
+    use crate::Runner;
     use crate::RunningJob;
     use crate::lua::{CommandOutput, RunParams};
 
@@ -115,7 +117,7 @@ mod lua_exports {
         Ok((args, params))
     }
 
-    pub fn build_command_impl(command: LuaValue, params: LuaValue, job_ctx: Arc<Mutex<RunningJob>>) -> Result<(), rlua::Error> {
+    pub fn build_command_impl(command: LuaValue, params: LuaValue, job_ctx: Arc<Mutex<Box<RunningJob>>>) -> Result<(), rlua::Error> {
         let (args, params) = collect_build_args(command, params)?;
         eprintln!("args: {:?}", args);
         eprintln!("  params: {:?}", params);
@@ -129,7 +131,7 @@ mod lua_exports {
         })
     }
 
-    pub fn check_output_impl<'lua>(ctx: rlua::Context<'lua>, command: LuaValue<'lua>, params: LuaValue<'lua>, job_ctx: Arc<Mutex<RunningJob>>) -> Result<rlua::Table<'lua>, rlua::Error> {
+    pub fn check_output_impl<'lua>(ctx: rlua::Context<'lua>, command: LuaValue<'lua>, params: LuaValue<'lua>, job_ctx: Arc<Mutex<Box<RunningJob>>>) -> Result<rlua::Table<'lua>, rlua::Error> {
         let (args, params) = collect_build_args(command, params)?;
         eprintln!("args: {:?}", args);
         eprintln!("  params: {:?}", params);
@@ -167,7 +169,7 @@ mod lua_exports {
         Ok(())
     }
 
-    pub fn metric(name: String, value: String, job_ctx: Arc<Mutex<RunningJob>>) -> Result<(), rlua::Error> {
+    pub fn metric(name: String, value: String, job_ctx: Arc<Mutex<Box<RunningJob>>>) -> Result<(), rlua::Error> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -178,7 +180,7 @@ mod lua_exports {
         })
     }
 
-    pub fn artifact(path: String, name: Option<String>, job_ctx: Arc<Mutex<RunningJob>>) -> Result<(), rlua::Error> {
+    pub fn artifact(path: String, name: Option<String>, job_ctx: Arc<Mutex<Box<RunningJob>>>) -> Result<(), rlua::Error> {
         let path: PathBuf = path.into();
 
         let default_name: String = match (path.file_name(), path.parent()) {
@@ -230,23 +232,24 @@ mod lua_exports {
     }
 
     pub mod step {
+        use crate::Runner;
         use crate::RunningJob;
         use std::sync::{Arc, Mutex};
 
-        pub fn start(job_ref: Arc<Mutex<RunningJob>>, name: String) -> Result<(), rlua::Error> {
+        pub fn start(job_ref: Arc<Mutex<Box<RunningJob>>>, name: String) -> Result<(), rlua::Error> {
             let mut job = job_ref.lock().unwrap();
             job.current_step.clear();
             job.current_step.push(name);
             Ok(())
         }
 
-        pub fn push(job_ref: Arc<Mutex<RunningJob>>, name: String) -> Result<(), rlua::Error> {
+        pub fn push(job_ref: Arc<Mutex<Box<RunningJob>>>, name: String) -> Result<(), rlua::Error> {
             let mut job = job_ref.lock().unwrap();
             job.current_step.push(name);
             Ok(())
         }
 
-        pub fn advance(job_ref: Arc<Mutex<RunningJob>>, name: String) -> Result<(), rlua::Error> {
+        pub fn advance(job_ref: Arc<Mutex<Box<RunningJob>>>, name: String) -> Result<(), rlua::Error> {
             let mut job = job_ref.lock().unwrap();
             job.current_step.pop();
             job.current_step.push(name);
@@ -257,14 +260,14 @@ mod lua_exports {
 
 struct DeclEnv<'lua, 'env> {
     lua_ctx: &'env rlua::Context<'lua>,
-    job_ref: &'env Arc<Mutex<RunningJob>>,
+    job_ref: &'env Arc<Mutex<Box<RunningJob>>>,
 }
 impl<'lua, 'env> DeclEnv<'lua, 'env> {
     fn create_function<A, R, F>(&self, name: &str, f: F) ->  Result<rlua::Function<'lua>, String>
         where
         A: FromLuaMulti<'lua>,
         R: ToLuaMulti<'lua>,
-        F: 'static + Send + Fn(rlua::Context<'lua>, Arc<Mutex<RunningJob>>, A) -> Result<R, rlua::Error> {
+        F: 'static + Send + Fn(rlua::Context<'lua>, Arc<Mutex<Box<RunningJob>>>, A) -> Result<R, rlua::Error> {
 
         let job_ref = Arc::clone(self.job_ref);
         self.lua_ctx.create_function(move |ctx, args| {
@@ -276,7 +279,7 @@ impl<'lua, 'env> DeclEnv<'lua, 'env> {
 }
 
 impl BuildEnv {
-    pub fn new(job: &Arc<Mutex<RunningJob>>) -> Self {
+    pub fn new(job: &Arc<Mutex<Box<RunningJob>>>) -> Self {
         let env = BuildEnv {
             lua: Lua::new(),
             job: Arc::clone(job),
