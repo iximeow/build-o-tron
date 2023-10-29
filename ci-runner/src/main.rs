@@ -13,7 +13,7 @@ use std::task::{Context, Poll};
 use std::pin::Pin;
 use std::marker::Unpin;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ci_lib_native::io;
 use ci_lib_native::io::{ArtifactStream, VecSink};
@@ -41,6 +41,36 @@ trait Runner: Send + Sync + 'static {
     async fn report_command_info(&mut self, info: CommandInfo) -> Result<(), String>;
     async fn send_metric(&mut self, name: &str, value: String) -> Result<(), String>;
     async fn create_artifact(&self, name: &str, desc: &str, build_token: &str) -> Result<ArtifactStream, String>;
+}
+
+struct LocalRunner {
+    working_dir: PathBuf,
+    current_job: Option<RequestedJob>,
+}
+
+/// `LocalRunner` is the implementation supporting "i want to run this goodfile locally and not
+/// need to collaborate with a remote server for executing this task to completion"
+#[async_trait::async_trait]
+impl Runner for LocalRunner {
+    async fn report_start(&mut self) -> Result<(), String> {
+        println!("starting task");
+        Ok(())
+    }
+    async fn report_task_status(&mut self, status: TaskInfo) -> Result<(), String> {
+        println!("task status: {:?}", status);
+        Ok(())
+    }
+    async fn report_command_info(&mut self, info: CommandInfo) -> Result<(), String> {
+        println!("command info: {:?}", info);
+        Ok(())
+    }
+    async fn send_metric(&mut self, name: &str, value: String) -> Result<(), String> {
+        println!("metric reported: {} = {}", name, value);
+        Ok(())
+    }
+    async fn create_artifact(&self, name: &str, desc: &str, build_token: &str) -> Result<ArtifactStream, String> {
+        Err("can't create artifacts yet".to_string())
+    }
 }
 
 /// `RmoteServerRunner` is the implementation of `Runner` supporting "a remote server has given me
@@ -94,7 +124,19 @@ impl Runner for RemoteServerRunner {
 }
 
 impl RunningJob {
-    fn from_job(job: RequestedJob, client: RemoteServerRunner) -> Self {
+    fn local_from_job(job: RequestedJob) -> Self {
+        let mut working_dir = PathBuf::new();
+        working_dir.push(".");
+        Self {
+            job,
+            runner_ctx: Box::new(LocalRunner {
+                working_dir,
+                current_job: None,
+            }) as Box<dyn Runner>,
+            current_step: StepTracker::new(),
+        }
+    }
+    fn remote_from_job(job: RequestedJob, client: RemoteServerRunner) -> Self {
         Self {
             job,
             runner_ctx: Box::new(client) as Box<dyn Runner>,
@@ -276,7 +318,7 @@ impl RunningJob {
     }
 
     async fn run(mut self) {
-        self.runner_ctx.report_start();
+        self.runner_ctx.report_start().await.unwrap();
 
         std::fs::remove_dir_all("tmpdir").unwrap();
         std::fs::create_dir("tmpdir").unwrap();
@@ -496,6 +538,25 @@ async fn main() {
     let mut args = std::env::args();
     args.next().expect("first arg exists");
     let config_path = args.next().unwrap_or("./runner_config.json".to_string());
+
+    if config_path.ends_with("goodfile") {
+        run_local(config_path).await
+    } else {
+        run_remote(config_path).await
+    }
+}
+
+async fn run_local(config_path: String) {
+    let job = RequestedJob {
+        commit: "current commit?".to_string(),
+        remote_url: "cwd?".to_string(),
+        build_token: "n/a".to_string(),
+    };
+    let mut job = RunningJob::local_from_job(job);
+    job.run().await;
+}
+
+async fn run_remote(config_path: String) {
     let runner_config: RunnerConfig = serde_json::from_reader(std::fs::File::open(config_path).expect("file exists and is accessible")).expect("valid json for RunnerConfig");
     let client = reqwest::ClientBuilder::new()
         .connect_timeout(Duration::from_millis(1000))
@@ -548,7 +609,7 @@ async fn main() {
 
                 eprintln!("doing {:?}", job);
 
-                let mut job = RunningJob::from_job(job, client);
+                let mut job = RunningJob::remote_from_job(job, client);
                 job.run().await;
                 std::thread::sleep(Duration::from_millis(10000));
             },

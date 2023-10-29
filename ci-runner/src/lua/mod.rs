@@ -232,7 +232,6 @@ mod lua_exports {
     }
 
     pub mod step {
-        use crate::Runner;
         use crate::RunningJob;
         use std::sync::{Arc, Mutex};
 
