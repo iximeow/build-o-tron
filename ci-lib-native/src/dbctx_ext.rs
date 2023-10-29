@@ -1,6 +1,5 @@
 use crate::io::ArtifactDescriptor;
 use crate::notifier::{RemoteNotifier, NotifierConfig};
-use tokio::fs::{File, OpenOptions};
 
 use ci_lib_core::dbctx::DbCtx;
 

@@ -1,11 +1,8 @@
 use std::sync::Mutex;
-// use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::time::{SystemTime, UNIX_EPOCH};
-// use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::path::Path;
 use std::path::PathBuf;
-use std::ops::Deref;
 
 use crate::sql;
 
@@ -32,10 +29,6 @@ impl DbCtx {
             config_path: config_path.as_ref().to_owned(),
             conn: Mutex::new(Connection::open(db_path).unwrap())
         }
-    }
-
-    fn conn<'a>(&'a self) -> impl Deref<Target = Connection> + 'a {
-        self.conn.lock().unwrap()
     }
 
     pub fn create_tables(&self) -> Result<(), ()> {

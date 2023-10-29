@@ -14,7 +14,7 @@ ci-lib-core = { path = "../ci-lib-core" }
 ci-lib-native = { path = "../ci-lib-native" }
 ci-lib-web = { path = "../ci-lib-web" }
 
-tokio = { features = ["full"] }
+tokio = { version = "*", features = ["full"] }
 tokio-stream = "*"
 serde_json = "*"
 serde = { version = "*", features = ["derive"] }

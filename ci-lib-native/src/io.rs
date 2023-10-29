@@ -1,11 +1,9 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use futures_util::StreamExt;
 use tokio::fs::File;
-use std::io::Write;
 use tokio::fs::OpenOptions;
 use std::task::{Poll, Context};
 use std::pin::Pin;
-use std::time::{UNIX_EPOCH, SystemTime};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -26,7 +24,7 @@ impl VecSink {
 impl tokio::io::AsyncWrite for VecSink {
     fn poll_write(
         self: Pin<&mut Self>,
-        cx: &mut Context,
+        _cx: &mut Context,
         buf: &[u8]
     ) -> Poll<Result<usize, std::io::Error>> {
         self.body.lock().unwrap().extend_from_slice(buf);
@@ -92,6 +90,7 @@ impl tokio::io::AsyncWrite for ArtifactStream {
 
 
 pub struct ArtifactDescriptor {
+    #[allow(dead_code)]
     job_id: u64,
     pub artifact_id: u64,
     file: File,

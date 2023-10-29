@@ -1,10 +1,8 @@
-use crate::Runner;
 use crate::RunningJob;
 
 use rlua::prelude::*;
 
 use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
 
 pub const DEFAULT_RUST_GOODFILE: &'static [u8] = include_bytes!("../../../config/goodfiles/rust.lua");
 
@@ -15,8 +13,8 @@ pub struct BuildEnv {
 
 #[derive(Debug)]
 pub struct RunParams {
-    step: Option<String>,
-    name: Option<String>,
+    _step: Option<String>,
+    _name: Option<String>,
     cwd: Option<String>,
 }
 
@@ -27,9 +25,8 @@ pub struct CommandOutput {
 }
 
 mod lua_exports {
-    use crate::Runner;
     use crate::RunningJob;
-    use crate::lua::{CommandOutput, RunParams};
+    use crate::lua::RunParams;
 
     use std::sync::{Arc, Mutex};
     use std::path::PathBuf;
@@ -69,7 +66,7 @@ mod lua_exports {
                     LuaValue::Nil => {
                         None
                     },
-                    other => {
+                    _other => {
                         return Err(LuaError::RuntimeError(format!("params[\"step\"] must be a string")));
                     }
                 };
@@ -80,7 +77,7 @@ mod lua_exports {
                     LuaValue::Nil => {
                         None
                     },
-                    other => {
+                    _other => {
                         return Err(LuaError::RuntimeError(format!("params[\"name\"] must be a string")));
                     }
                 };
@@ -91,21 +88,21 @@ mod lua_exports {
                     LuaValue::Nil => {
                         None
                     },
-                    other => {
+                    _other => {
                         return Err(LuaError::RuntimeError(format!("params[\"cwd\"] must be a string")));
                     }
                 };
 
                 RunParams {
-                    step,
-                    name,
+                    _step: step,
+                    _name: name,
                     cwd,
                 }
             },
             LuaValue::Nil => {
                 RunParams {
-                    step: None,
-                    name: None,
+                    _step: None,
+                    _name: None,
                     cwd: None,
                 }
             }
@@ -227,7 +224,7 @@ mod lua_exports {
 
     pub fn file_size(path: &str) -> Result<u64, rlua::Error> {
         Ok(std::fs::metadata(&format!("tmpdir/{}", path))
-            .map_err(|e| LuaError::RuntimeError(format!("could not stat {:?}", path)))?
+            .map_err(|_e| LuaError::RuntimeError(format!("could not stat {:?}", path)))?
             .len())
     }
 
@@ -300,7 +297,7 @@ impl BuildEnv {
             Ok(())
         })?;
 
-        let check_dependencies = decl_env.create_function("dependencies", move |_, job_ref, commands: Vec<String>| {
+        let check_dependencies = decl_env.create_function("dependencies", move |_, _job_ref, commands: Vec<String>| {
             lua_exports::check_dependencies(commands)
         })?;
 
@@ -316,21 +313,21 @@ impl BuildEnv {
             lua_exports::metric(name, value, job_ref)
         })?;
 
-        let now_ms = decl_env.create_function("now_ms", move |_, job_ref, ()| Ok(ci_lib_core::now_ms()))?;
+        let now_ms = decl_env.create_function("now_ms", move |_, _job_ref, ()| Ok(ci_lib_core::now_ms()))?;
 
         let artifact = decl_env.create_function("artifact", move |_, job_ref, (path, name): (String, Option<String>)| {
             lua_exports::artifact(path, name, job_ref)
         })?;
 
-        let error = decl_env.create_function("error", move |_, job_ref, msg: String| {
+        let error = decl_env.create_function("error", move |_, _job_ref, msg: String| {
             Err::<(), LuaError>(LuaError::RuntimeError(format!("explicit error: {}", msg)))
         })?;
 
-        let path_has_cmd = decl_env.create_function("path_has_cmd", move |_, job_ref, name: String| {
+        let path_has_cmd = decl_env.create_function("path_has_cmd", move |_, _job_ref, name: String| {
             lua_exports::has_cmd(&name)
         })?;
 
-        let size_of_file = decl_env.create_function("size_of_file", move |_, job_ref, name: String| {
+        let size_of_file = decl_env.create_function("size_of_file", move |_, _job_ref, name: String| {
             lua_exports::file_size(&name)
         })?;
 

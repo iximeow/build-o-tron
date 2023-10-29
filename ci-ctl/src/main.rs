@@ -80,7 +80,7 @@ fn main() {
             match what {
                 JobAction::List => {
                     let db = DbCtx::new(&config_path, &db_path);
-                    let mut conn = db.conn.lock().unwrap();
+                    let conn = db.conn.lock().unwrap();
                     let mut query = conn.prepare(ci_lib_core::sql::SELECT_ALL_RUNS_WITH_JOB_INFO).unwrap();
                     let mut jobs = query.query([]).unwrap();
                     while let Some(row) = jobs.next().unwrap() {
@@ -170,7 +170,7 @@ fn main() {
                     println!("[+] new repo created: '{}' id {}", &name, repo_id);
                     if let Some((remote, remote_kind, config_path)) = remote_config {
                         let full_config_file_path = format!("{}/{}", &db.config_path.display(), config_path);
-                        let config = match remote_kind.as_ref() {
+                        let _config = match remote_kind.as_ref() {
                             "github" => {
                                 assert!(NotifierConfig::github_from_file(&full_config_file_path).is_ok());
                             }

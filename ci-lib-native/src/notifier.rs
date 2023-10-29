@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use axum::http::StatusCode;
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
-use lettre::{Message, Transport};
+use lettre::Message;
 use lettre::transport::smtp::extension::ClientId;
 use lettre::transport::smtp::client::{SmtpConnection, TlsParametersBuilder};
 use std::time::Duration;
@@ -88,7 +88,7 @@ impl RemoteNotifier {
         }
     }
 
-    pub async fn tell_job_status(&self, ctx: &Arc<DbCtx>, repo_id: u64, sha: &str, job_id: u64, state: &str, desc: &str, target_url: &str) -> Result<(), String> {
+    pub async fn tell_job_status(&self, _ctx: &Arc<DbCtx>, _repo_id: u64, sha: &str, _job_id: u64, state: &str, desc: &str, target_url: &str) -> Result<(), String> {
         match &self.notifier {
             NotifierConfig::GitHub { token } => {
                 let status_info = serde_json::json!({
