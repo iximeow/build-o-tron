@@ -7,6 +7,7 @@ use tokio::process::Command;
 use std::process::Stdio;
 use std::process::ExitStatus;
 use tokio::io::AsyncWrite;
+use tokio::fs::OpenOptions;
 use serde::{Deserialize, de::DeserializeOwned, Serialize};
 use std::marker::Unpin;
 use std::path::PathBuf;
@@ -37,7 +38,7 @@ trait Runner: Send + Sync + 'static {
     async fn report_task_status(&mut self, status: TaskInfo) -> Result<(), String>;
     async fn report_command_info(&mut self, info: CommandInfo) -> Result<(), String>;
     async fn send_metric(&mut self, name: &str, value: String) -> Result<(), String>;
-    async fn create_artifact(&self, name: &str, desc: &str, build_token: &str) -> Result<ArtifactStream, String>;
+    async fn create_artifact(&self, name: &str, desc: &str, build_token: &str) -> Result<Box<dyn AsyncWrite + Unpin + Send>, String>;
 }
 
 #[allow(dead_code)]
@@ -66,8 +67,17 @@ impl Runner for LocalRunner {
         println!("metric reported: {} = {}", name, value);
         Ok(())
     }
-    async fn create_artifact(&self, _name: &str, _desc: &str, _build_token: &str) -> Result<ArtifactStream, String> {
-        Err("can't create artifacts yet".to_string())
+    async fn create_artifact(&self, name: &str, _desc: &str, _build_token: &str) -> Result<Box<dyn AsyncWrite + Unpin + Send>, String> {
+        let mut path = self.working_dir.clone();
+        path.push(name);
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)
+            .await
+            .map_err(|e| format!("error opening file to store artifact {}: {:?}", name, e))?;
+        Ok(Box::new(file))
     }
 }
 
@@ -102,7 +112,8 @@ impl Runner for RemoteServerRunner {
             .await
             .map_err(|e| format!("failed to send metric {}: {:?})", name, e))
     }
-    async fn create_artifact(&self, name: &str, desc: &str, build_token: &str) -> Result<ArtifactStream, String> {
+    // TODO: panics if hyper finds the channel is closed. hum
+    async fn create_artifact(&self, name: &str, desc: &str, build_token: &str) -> Result<Box<dyn AsyncWrite + Unpin + Send>, String> {
         let (sender, body) = hyper::Body::channel();
         let resp = self.http.post("https://ci.butactuallyin.space:9876/api/artifact")
             .header("user-agent", "ci-butactuallyin-space-runner")
@@ -116,7 +127,7 @@ impl Runner for RemoteServerRunner {
 
         if resp.status() == StatusCode::OK {
             eprintln!("[+] artifact '{}' started", name);
-            Ok(ArtifactStream::new(sender))
+            Ok(Box::new(ArtifactStream::new(sender)) as Box<dyn AsyncWrite + Unpin + Send>)
         } else {
             Err(format!("[-] unable to create artifact: {:?}", resp))
         }
@@ -126,7 +137,12 @@ impl Runner for RemoteServerRunner {
 impl RunningJob {
     fn local_from_job(job: RequestedJob) -> Self {
         let mut working_dir = PathBuf::new();
-        working_dir.push(".");
+        working_dir.push("ci_working_dir");
+        if std::path::Path::new("ci_working_dir").exists() {
+            eprintln!("[!] removing prior ci_working_dir to store artifacts");
+            std::fs::remove_dir_all("ci_working_dir").unwrap();
+        }
+        std::fs::create_dir(&working_dir).expect("can create artifacts working dir");
         Self {
             job,
             runner_ctx: Box::new(LocalRunner {
@@ -216,8 +232,7 @@ impl RunningJob {
         self.runner_ctx.send_metric(name, value).await
     }
 
-    // TODO: panics if hyper finds the channel is closed. hum
-    async fn create_artifact(&self, name: &str, desc: &str) -> Result<ArtifactStream, String> {
+    async fn create_artifact(&self, name: &str, desc: &str) -> Result<Box<dyn AsyncWrite + Unpin + Send>, String> {
         self.runner_ctx.create_artifact(name, desc, &self.job.build_token).await
     }
 
@@ -290,7 +305,7 @@ impl RunningJob {
     }
 
     async fn execute_command(&self, mut command: Command, name: &str, _desc: &str, mut stdout_reporter: impl AsyncWrite + Unpin + Send + 'static, mut stderr_reporter: impl AsyncWrite + Unpin + Send + 'static) -> Result<ExitStatus, String> {
-        eprintln!("[.] running {}", name);
+        eprintln!("[.] running {}: {:?}", name, command);
 
         let mut child = command
             .stdin(Stdio::null())
@@ -322,7 +337,10 @@ impl RunningJob {
     async fn run(mut self) {
         self.runner_ctx.report_start().await.unwrap();
 
-        std::fs::remove_dir_all("tmpdir").unwrap();
+        if std::path::Path::new("tmpdir").exists() {
+            eprintln!("[!] removing prior tmpdir to rebuild into");
+            std::fs::remove_dir_all("tmpdir").unwrap();
+        }
         std::fs::create_dir("tmpdir").unwrap();
 
         let ctx = Arc::new(Mutex::new(Box::new(self) as Box<RunningJob>));
@@ -547,10 +565,24 @@ async fn main() {
     }
 }
 
-async fn run_local(_config_path: String) {
+async fn run_local(config_path: String) {
+    let path = PathBuf::from(config_path);
+    let repo = path.parent().expect("goodfile has a parent directory");
+    if !std::path::Path::new(&format!("{}/.git", repo.display())).exists() {
+        panic!("found goodfile parent directory '{}', but it is not a git repo", repo.display());
+    }
+    // TODO: check for uncommitted changes, warn that these will not be cloned or built...
+    let log_output = Command::new("git")
+        .current_dir(repo)
+        .args(&["log", "--pretty=format:%H", "-n", "1"])
+        .output()
+        .await
+        .expect("git log completes");
+    let out_string = std::str::from_utf8(&log_output.stdout).expect("git reports utf8 text");
+    let current_commit = out_string.trim().to_string();
     let job = RequestedJob {
-        commit: "current commit?".to_string(),
-        remote_url: "cwd?".to_string(),
+        commit: current_commit,
+        remote_url: repo.display().to_string(),
         build_token: "n/a".to_string(),
     };
     let job = RunningJob::local_from_job(job);
