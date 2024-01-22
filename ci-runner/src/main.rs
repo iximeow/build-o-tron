@@ -590,7 +590,10 @@ async fn run_local(config_path: String) {
 }
 
 async fn run_remote(config_path: String) {
-    let runner_config: RunnerConfig = serde_json::from_reader(std::fs::File::open(config_path).expect("file exists and is accessible")).expect("valid json for RunnerConfig");
+    let runner_file = std::fs::File::open(&config_path).unwrap_or_else(|e| {
+        panic!("could not open runner config at '{}': {}", config_path, e);
+    });
+    let runner_config: RunnerConfig = serde_json::from_reader(runner_file).expect("valid json for RunnerConfig");
     let client = reqwest::ClientBuilder::new()
         .connect_timeout(Duration::from_millis(1000))
         .timeout(Duration::from_millis(600000))

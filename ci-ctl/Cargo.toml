@@ -13,3 +13,4 @@ path = "src/main.rs"
 ci-lib-core = { path = "../ci-lib-core" }
 ci-lib-native = { path = "../ci-lib-native" }
 clap = { version = "4", features = ["derive"] }
+tokio = { version = "*", features = ["full"] }

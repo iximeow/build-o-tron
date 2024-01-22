@@ -20,6 +20,7 @@ pub struct RemoteNotifier {
 pub enum NotifierConfig {
     GitHub {
         token: String,
+        webhook_token: String,
     },
     Email {
         username: String,
@@ -90,32 +91,14 @@ impl RemoteNotifier {
 
     pub async fn tell_job_status(&self, _ctx: &Arc<DbCtx>, _repo_id: u64, sha: &str, _job_id: u64, state: &str, desc: &str, target_url: &str) -> Result<(), String> {
         match &self.notifier {
-            NotifierConfig::GitHub { token } => {
-                let status_info = serde_json::json!({
-                    "state": state,
-                    "description": desc,
-                    "target_url": target_url,
-                    "context": "actuallyinspace runner",
-                });
-
+            NotifierConfig::GitHub { token, webhook_token } => {
                 // TODO: should pool (probably in ctx?) to have an upper bound in concurrent
                 // connections.
-                let client = reqwest::Client::new();
-                let req = client.post(&format!("https://api.github.com/repos/{}/statuses/{}", &self.remote_path, sha))
-                    .body(serde_json::to_string(&status_info).expect("can stringify json"))
-                    .header("content-type", "application/json")
-                    .header("user-agent", "iximeow")
-                    .header("authorization", format!("Bearer {}", token))
-                    .header("accept", "application/vnd.github+json");
-                eprintln!("sending {:?}", req);
-                eprintln!("  body: {}", serde_json::to_string(&status_info).expect("can stringify json"));
-                let res = req
-                    .send()
-                    .await;
+                let res = (crate::GithubApi { token, webhook_token }).post_status(&self.remote_path, sha, state, desc, target_url).await;
 
                 match res {
                     Ok(res) => {
-                        if res.status() == StatusCode::OK || res.status() == StatusCode::CREATED{
+                        if res.status() == StatusCode::OK || res.status() == StatusCode::CREATED {
                             Ok(())
                         } else {
                             Err(format!("bad response: {}, response data: {:?}", res.status().as_u16(), res))

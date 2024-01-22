@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 use ci_lib_core::dbctx::DbCtx;
-use ci_lib_native::notifier::NotifierConfig;
+use ci_lib_native::{GithubApi, notifier::NotifierConfig};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -185,8 +185,36 @@ fn main() {
                         println!("[+] new remote created: repo '{}', {} remote at {}", &name, remote_kind, remote);
                         match remote_kind.as_str() {
                             "github" => {
-                                println!("[!] now go make sure your github repo has a webhook set for `https://ci.butactuallyin.space/{}` to receive at least the `push` event.", remote.as_str());
-                                println!("      the secret sent with calls to this webhook should be the same preshared secret as the CI server is configured to know.");
+                                // attempt to create a webhook now...
+                                let (token, webhook_token) = match NotifierConfig::github_from_file(&full_config_file_path).expect("notifier config is valid") {
+                                    NotifierConfig::GitHub { token, webhook_token } => (token, webhook_token),
+                                    _ => {
+                                        panic!("unexpected notifier config format, should have been github..")
+                                    }
+                                };
+                                let gh = GithubApi { token: &token, webhook_token: &webhook_token };
+                                tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async move {
+                                    match gh.has_ci_webhook(remote.as_str()).await {
+                                        Ok(present) => {
+                                            if !present {
+                                                println!("[.] trying to create push webhook on github.com/{}", remote.as_str());
+                                                let res = gh.create_ci_webhook(remote.as_str()).await;
+                                                if let Err(e) = res {
+                                                    println!("[!] failed to create webhook on github.com/{}: {}", remote.as_str(), e);
+                                                } else {
+                                                    println!("[+] created webhook on github.com/{}. CI is good to go?", remote.as_str());
+                                                }
+                                            } else {
+                                                println!("[+] ci.butactuallyin.space webhook appears to already be present on github.com/{}", remote.as_str());
+                                            }
+                                        }
+                                        Err(e) => {
+                                            println!("[!] unable to check for presence of ci.butactuallin.space webhook on github.com/{}: {}", remote.as_str(), e);
+                                            println!("[!] you must make sure your github repo has a webhook set for `https://ci.butactuallyin.space/{}` to receive at least the `push` event.", remote.as_str());
+                                            println!("      the secret sent with calls to this webhook should be the same preshared secret as the CI server is configured to know.");
+                                        }
+                                    }
+                                });
                             }
                             _ => { }
                         }

@@ -318,6 +318,7 @@ dependencies = [
  "ci-lib-core",
  "ci-lib-native",
  "clap 4.0.29",
+ "tokio",
 ]
 
 [[package]]
