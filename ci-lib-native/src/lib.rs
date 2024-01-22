@@ -73,7 +73,7 @@ impl GithubApi<'_> {
         let webhook_url = format!("https://ci.butactuallyin.space/{remote_path}");
 
         let webhook_config = serde_json::json!({
-            "name": ci_server,
+            "name": "web",
             "active": true,
             "events": ["push"],
             "config": {
@@ -96,7 +96,7 @@ impl GithubApi<'_> {
         let resp = req.send().await;
 
         match resp {
-            Ok(resp) if resp.status() == StatusCode::OK => {
+            Ok(resp) if resp.status() == StatusCode::OK || resp.status() == StatusCode::CREATED => {
                 eprintln!("[+] created webhook successfully");
                 Ok(())
             }
