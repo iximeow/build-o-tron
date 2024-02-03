@@ -804,7 +804,9 @@ impl HostDesc {
     fn from_parts(hostname: String, vendor_id: String, cpu_family: String, model: String, cpu_max_freq_khz: u64) -> Self {
         let cpu_desc = match (vendor_id.as_str(), cpu_family.as_str(), model.as_str()) {
             ("Arm Limited", "8", "0xd03") => "aarch64 A53".to_string(),
+            ("Arm Limited", "8", "0xd0c") => "aarch64 Neoverse N1".to_string(),
             ("GenuineIntel", "6", "85") => "x86_64 Skylake".to_string(),
+            ("GenuineIntel", "6", "58") => "x86_64 Ivy Bridge".to_string(),
             ("AuthenticAMD", "23", "113") => "x86_64 Matisse".to_string(),
             (vendor, family, model) => format!("unknown {}:{}:{}", vendor, family, model)
         };
