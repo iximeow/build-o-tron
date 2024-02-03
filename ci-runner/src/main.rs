@@ -672,14 +672,20 @@ mod host_info {
     // get host model name, microcode, and how many cores
     fn collect_cpu_info() -> CpuInfo {
         fn find_line(lines: &[String], prefix: &str) -> String {
+            try_find_line(lines, prefix).expect(&format!("{} line is present", prefix))
+        }
+
+        fn try_find_line(lines: &[String], prefix: &str) -> Option<String> {
             lines.iter()
                 .find(|line| line.starts_with(prefix))
-                .expect(&format!("{} line is present", prefix))
-                .split(":")
-                .last()
-                .unwrap()
-                .trim()
-                .to_string()
+                .map(|line| {
+                    line
+                        .split(":")
+                        .last()
+                        .unwrap()
+                        .trim()
+                        .to_string()
+                })
         }
 
         /// try finding core `cpu`'s max frequency in khz. we'll assume this is the actual speed a
