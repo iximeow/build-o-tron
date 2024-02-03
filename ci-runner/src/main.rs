@@ -727,9 +727,23 @@ mod host_info {
                 let processors: Vec<&String> = cpu_lines.iter().filter(|line| line.starts_with("processor")).collect();
                 let cores = processors.len() as u32;
 
-                // alternate possible path: /sys/firmware/devicetree/base/compatible
-                let model_name = std::fs::read_to_string("/proc/device-tree/compatible").unwrap();
-                let model_name = model_name.replace("\x00", ";");
+                let model_name = if let Ok(value) = std::env::var("MODEL_NAME_OVERRIDE") {
+                    value
+                } else {
+                    // alternate possible path: /sys/firmware/devicetree/base/compatible
+                    // except the one mt. jade server which has just.. nothing under devicetree. no
+                    // idea why! start there, and if there's nothing then... try reading it from the
+                    // runner config???
+                    let model_name_path = std::path::Path::new("/proc/device-tree/compatible");
+                    if model_name_path.exists() {
+                        let model_name = std::fs::read_to_string(model_name_path).unwrap();
+                        let model_name = model_name.replace("\x00", ";");
+                        model_name
+                    } else {
+                        eprintln!("[!] {} does not exist, model name is unknown!", model_name_path.display());
+                        "unknown".to_string()
+                    }
+                };
                 let vendor_id = find_line(&cpu_lines, "CPU implementer");
                 let vendor_name = match vendor_id.as_str() {
                     "0x41" => "Arm Limited".to_string(),
