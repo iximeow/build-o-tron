@@ -75,7 +75,7 @@ enum GithubHookError {
 
 #[derive(Debug)]
 enum GithubEvent {
-    Push { tip: String, repo_name: String, head_commit: serde_json::Map<String, serde_json::Value>, pusher: serde_json::Map<String, serde_json::Value> },
+    Push { tip: String, repo_name: String, head_commit: serde_json::Map<String, serde_json::Value>, pusher: serde_json::Map<String, serde_json::Value>, ref_name: String },
     Other {}
 }
 
@@ -111,17 +111,23 @@ fn parse_push_event(body: serde_json::Value) -> Result<GithubEvent, GithubHookEr
         .ok_or(GithubHookError::BadType { path: "pusher", expected: "obj" })?
         .to_owned();
 
-    Ok(GithubEvent::Push { tip, repo_name, head_commit, pusher })
+    let ref_name = body.get("ref")
+        .ok_or(GithubHookError::MissingElement { path: "ref" })?
+        .as_str()
+        .ok_or(GithubHookError::BadType { path: "ref", expected: "str" })?
+        .to_owned();
+
+    Ok(GithubEvent::Push { tip, repo_name, head_commit, pusher, ref_name })
 }
 
 async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event: GithubEvent) -> impl IntoResponse {
-    let (sha, repo, head_commit, pusher) = if let GithubEvent::Push { tip, repo_name, head_commit, pusher } = event {
-        (tip, repo_name, head_commit, pusher)
+    let (sha, repo, head_commit, pusher, ref_name) = if let GithubEvent::Push { tip, repo_name, head_commit, pusher, ref_name } = event {
+        (tip, repo_name, head_commit, pusher, ref_name)
     } else {
         panic!("process push event on non-push event");
     };
 
-    println!("handling push event to {}/{}: sha {} in repo {}, {:?}\n  pusher: {:?}", owner, repo, sha, repo, head_commit, pusher);
+    println!("handling push event to {}/{}: sha {} (ref: {}) in repo {}, {:?}\n  pusher: {:?}", owner, repo, sha, ref_name, repo, head_commit, pusher);
 
     // push event is in terms of a ref, but we don't know if it's a new commit (yet).
     // in terms of CI jobs, we care mainly about new commits.
