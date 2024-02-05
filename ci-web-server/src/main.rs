@@ -375,6 +375,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     }
 
     let metrics = summarize_job_metrics(&ctx.dbctx, run.id, run.job_id).unwrap();
+    let metrics_table = job_metrics_to_html_table(&metrics);
 
     let mut html = String::new();
     html.push_str("<html>\n");
@@ -399,7 +400,7 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         html.push_str("    <div>artifacts</div>\n");
         html.push_str(&artifacts_fragment);
     }
-    if let Some(metrics) = metrics {
+    if let Some(metrics) = metrics_table {
         html.push_str(&metrics);
     }
     html.push_str("  </body>\n");
@@ -408,84 +409,84 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     (StatusCode::OK, Html(html))
 }
 
-fn summarize_job_metrics(dbctx: &Arc<DbCtx>, run_id: u64, job_id: u64) -> Result<Option<String>, String> {
+fn summarize_job_metrics(dbctx: &Arc<DbCtx>, run_id: u64, job_id: u64) -> Result<MetricsInfo, String> {
     let runs = dbctx.runs_for_job_one_per_host(job_id)?;
+
+    // very silly ordering issue: need an authoritative ordering of metrics to display metrics
+    // in a consistent order across runs (though they SHOULD all be ordered the same).
+    //
+    // the first run might not have all metrics (first run could be on the slowest build host
+    // f.ex), so for now just assume that metrics *will* be consistently ordered and build a
+    // list of metrics from the longest list of metrics we've seen. builders do not support
+    // concurrency so at least the per-run metrics-order-consistency assumption should hold..
+    let mut all_names: Vec<String> = Vec::new();
+
+    let all_metrics: Vec<(HashMap<String, String>, HostDesc)> = runs.iter().map(|run| {
+        let metrics = dbctx.metrics_for_run(run.id).unwrap();
+
+        let mut metrics_map = HashMap::new();
+        for metric in metrics.into_iter() {
+            if !all_names.contains(&metric.name) {
+                all_names.push(metric.name.clone());
+            }
+            metrics_map.insert(metric.name, metric.value);
+        }
+
+        let (hostname, cpu_vendor_id, cpu_family, cpu_model, cpu_max_freq_khz) = match run.host_id {
+            Some(host_id) => {
+                dbctx.host_model_info(host_id).unwrap()
+            }
+            None => {
+                ("unknown".to_string(), "unknown".to_string(), "0".to_string(), "0".to_string(), 0)
+            }
+        };
+
+        (metrics_map, HostDesc::from_parts(hostname, cpu_vendor_id, cpu_family, cpu_model, cpu_max_freq_khz))
+    }).collect();
+
+    Ok(MetricsInfo {
+        all_names,
+        all_metrics,
+    })
+}
+
+struct MetricsInfo {
+    all_names: Vec<String>,
+    all_metrics: Vec<(HashMap<String, String>, HostDesc)>,
+}
+
+fn job_metrics_to_html_table(metrics_info: &MetricsInfo) -> Option<String> {
+    if metrics_info.all_metrics.is_empty() {
+        return None;
+    }
 
     let mut section = String::new();
     section.push_str("<div>\n");
     section.push_str("<h3>metrics</h3>\n");
     section.push_str("<table style='font-family: monospace;'>\n");
 
-    if runs.len() == 1 {
-        let metrics = dbctx.metrics_for_run(run_id).unwrap();
-        if metrics.is_empty() {
-            return Ok(None);
+    let mut header = "<tr><th>name</th>".to_string();
+    for (_, host) in metrics_info.all_metrics.iter() {
+        header.push_str(&format!("<th>{}</br>{} @ {:.3}GHz</th>", &host.hostname, &host.cpu_desc, (host.cpu_max_freq_khz as f64) / 1000_000.0));
+    }
+    header.push_str("</tr>\n");
+    section.push_str(&header);
+
+    for name in metrics_info.all_names.iter() {
+        let mut row = format!("<tr><td>{}</td>", &name);
+        for (metrics, _) in metrics_info.all_metrics.iter() {
+            let value = metrics.get(name)
+                .map(|x| x.clone())
+                .unwrap_or_else(String::new);
+            row.push_str(&format!("<td>{}</td>", value));
         }
-
-        section.push_str("<tr><th>name</th><th>value</th></tr>");
-        for metric in metrics {
-            section.push_str(&format!("<tr><td>{}</td><td>{}</td></tr>", &metric.name, &metric.value));
-        }
-    } else {
-        // very silly ordering issue: need an authoritative ordering of metrics to display metrics
-        // in a consistent order across runs (though they SHOULD all be ordered the same).
-        //
-        // the first run might not have all metrics (first run could be on the slowest build host
-        // f.ex), so for now just assume that metrics *will* be consistently ordered and build a
-        // list of metrics from the longest list of metrics we've seen. builders do not support
-        // concurrency so at least the per-run metrics-order-consistency assumption should hold..
-        let mut all_names: Vec<String> = Vec::new();
-
-        let all_metrics: Vec<(HashMap<String, String>, HostDesc)> = runs.iter().map(|run| {
-            let metrics = dbctx.metrics_for_run(run.id).unwrap();
-
-            let mut metrics_map = HashMap::new();
-            for metric in metrics.into_iter() {
-                if !all_names.contains(&metric.name) {
-                    all_names.push(metric.name.clone());
-                }
-                metrics_map.insert(metric.name, metric.value);
-            }
-
-            let (hostname, cpu_vendor_id, cpu_family, cpu_model, cpu_max_freq_khz) = match run.host_id {
-                Some(host_id) => {
-                    dbctx.host_model_info(host_id).unwrap()
-                }
-                None => {
-                    ("unknown".to_string(), "unknown".to_string(), "0".to_string(), "0".to_string(), 0)
-                }
-            };
-
-            (metrics_map, HostDesc::from_parts(hostname, cpu_vendor_id, cpu_family, cpu_model, cpu_max_freq_khz))
-        }).collect();
-
-        if all_metrics.is_empty() {
-            return Ok(None);
-        }
-
-        let mut header = "<tr><th>name</th>".to_string();
-        for (_, host) in all_metrics.iter() {
-            header.push_str(&format!("<th>{}</br>{} @ {:.3}GHz</th>", &host.hostname, &host.cpu_desc, (host.cpu_max_freq_khz as f64) / 1000_000.0));
-        }
-        header.push_str("</tr>\n");
-        section.push_str(&header);
-
-        for name in all_names.iter() {
-            let mut row = format!("<tr><td>{}</td>", &name);
-            for (metrics, _) in all_metrics.iter() {
-                let value = metrics.get(name)
-                    .map(|x| x.clone())
-                    .unwrap_or_else(String::new);
-                row.push_str(&format!("<td>{}</td>", value));
-            }
-            row.push_str("</tr>\n");
-            section.push_str(&row);
-        }
-    };
+        row.push_str("</tr>\n");
+        section.push_str(&row);
+    }
     section.push_str("</table>\n");
     section.push_str("</div>\n");
 
-    Ok(Some(section))
+    Some(section)
 }
 
 async fn handle_get_artifact(Path(path): Path<(String, String)>, State(ctx): State<WebserverState>) -> impl IntoResponse {
@@ -646,6 +647,45 @@ async fn handle_repo_summary(Path(path): Path<String>, summary_params: Query<Sum
         response.push_str("</tr>\n");
 
         row_num += 1;
+    }
+
+    let has_metrics = false;
+
+    if has_metrics {
+        /*
+        response.push_str("<h3>build metrics</h3>\n");
+        let commits = commits_ordered_by_date();
+        response.push_str("<table>\n");
+        for commit in commit {
+            response.push_str("  <tr>");
+            response.push_str("<td>");
+            response.push_str(&format!("<a href=\"/{commit.remote}/{commit.sha}\">commit_short</a>"));
+            match nice_name_for_commit(commit) {
+                CommitName::Stale(name) => {
+                    response.push_str(&format!("({nice_name})")));
+                }
+                CommitName::Current(name) => {
+                    response.push_str(&format!("(<a href=\"/{commit.remote}/{nice_name}\">{nice_name}</a>)")));
+                }
+            };
+            response.push_str("</td>");
+            let job = job_for_commit(commit);
+            let metrics = summarize_job_metrics(&ctx.dbctx, run.id, run.job_id).unwrap();
+            for metric in metric.all_names {
+                // add table row for metric name
+                // add table row for hostname under each metric
+                for host_metrics in metrics.all_metrics.iter() {
+                    response.push_str("<td>");
+                    if let Some(metric) = host_metrics.get(metric) {
+                        response.push_str(metric);
+                    }
+                    response.push_str("</td>");
+                }
+            }
+            response.push_str("</tr>\n");
+        }
+        response.push_str("</table>\n");
+        */
     }
     response.push_str("</html>");
 
