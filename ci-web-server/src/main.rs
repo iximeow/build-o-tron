@@ -242,6 +242,17 @@ async fn handle_ci_index(State(ctx): State<WebserverState>) -> impl IntoResponse
 async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(ctx): State<WebserverState>) -> impl IntoResponse {
     eprintln!("path: {}/{}, sha {}", path.0, path.1, path.2);
     let remote_path = format!("{}/{}", path.0, path.1);
+
+    let (remote_id, repo_id): (u64, u64) = match ctx.dbctx.conn.lock().unwrap()
+        .query_row("select id, repo_id from remotes where remote_path=?1;", [&remote_path], |row| Ok((row.get_unwrap(0), row.get_unwrap(1)))) {
+        Ok((remote_id, repo_id)) => {
+            (remote_id, repo_id)
+        },
+        Err(_) => {
+            return (StatusCode::NOT_FOUND, Html("<html><body>no such remote</body></html>".to_string()));
+        }
+    };
+
     let sha = path.2;
 
     let (commit_id, sha): (u64, String) = if sha.len() >= 7 {
