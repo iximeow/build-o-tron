@@ -128,7 +128,7 @@ fn main() {
                         })
                         .expect("can query");
 
-                    let job_id = db.new_job(remote.id, &commit, Some(&pusher_email), repo_default_run_pref).expect("can create");
+                    let (job_id, _commit_id) = db.new_job(remote.id, &commit, Some(&pusher_email), repo_default_run_pref).expect("can create");
                     let _ = db.new_run(job_id, None).unwrap();
                 }
             }
