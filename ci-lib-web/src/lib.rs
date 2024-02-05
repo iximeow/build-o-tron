@@ -226,7 +226,7 @@ pub fn build_repo_index(ctx: &Arc<DbCtx>) -> Result<String, String> {
     } else {
         response.push_str("<table class='build-table'>");
         response.push_str("<tr>\n");
-        let headings = ["repo", "last build", "job", "build commit", "duration", "status", "result"];
+        let headings = ["repo", "last build", "commit/job", "remote", "duration", "status", "result"];
         for heading in headings {
             response.push_str(&format!("<th class='row-item'>{}</th>", heading));
         }
@@ -244,12 +244,16 @@ pub fn build_repo_index(ctx: &Arc<DbCtx>) -> Result<String, String> {
             let repo_html = format!("<a href=\"/{}\">{}</a>", &repo.name, &repo.name);
 
             let job_commit = ctx.commit_sha(job.commit_id).expect("job has a commit");
-            let commit_html = match commit_url(&job, &job_commit, &ctx) {
-                (source, Some(url)) => format!("<a href=\"{}\">{}</a>", url, source),
-                (source, None) => source
+            let nice_name = ctx.nice_name_for_commit(job.commit_id).expect("can try to get a nice name");
+            let commit_html = match (job_url(&job, &job_commit, &ctx), nice_name) {
+                (url, Some(name)) => format!("<a href=\"{}\">{}</a> (job {}) {}", url, &job_commit[..9], job.id, name.stringy()),
+                (url, None) => format!("<a href=\"{}\">{}</a> (job {})", url, &job_commit[..9], job.id),
             };
 
-            let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx), job.id);
+            let remote_html = match commit_url(&job, &job_commit, &ctx) {
+                (source, Some(url)) => format!("<a href=\"{}\">{}</a>", url, source),
+                (source, None) => format!("{}", source),
+            };
 
             let last_build_time = Utc.timestamp_millis_opt(run.create_time as i64).unwrap().to_rfc2822();
             let duration = display_run_time(&run);
@@ -266,7 +270,7 @@ pub fn build_repo_index(ctx: &Arc<DbCtx>) -> Result<String, String> {
                 }
             };
 
-            let entries = [repo_html.as_str(), last_build_time.as_str(), job_html.as_str(), commit_html.as_str(), &duration, &status, &result];
+            let entries = [repo_html.as_str(), last_build_time.as_str(), commit_html.as_str(), remote_html.as_str(), &duration, &status, &result];
             let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
 
             let mut row_html = String::new();
