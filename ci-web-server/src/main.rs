@@ -129,23 +129,6 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
 
     println!("handling push event to {}/{}: sha {} (ref: {}) in repo {}, {:?}\n  pusher: {:?}", owner, repo, sha, ref_name, repo, head_commit, pusher);
 
-    // push event is in terms of a ref, but we don't know if it's a new commit (yet).
-    // in terms of CI jobs, we care mainly about new commits.
-    // so...
-    // * look up the commit,
-    // * if it known, bail out (new ref for existing commit we've already handled some way)
-    // * create a new commit ref
-    // * create a new job (state=pending) for the commit ref
-    let commit_id: Option<u64> = ctx.conn.lock().unwrap()
-        .query_row(ci_lib_core::sql::COMMIT_TO_ID, [sha.clone()], |row| row.get(0))
-        .optional()
-        .expect("can run query");
-
-    if commit_id.is_some() {
-        eprintln!("commit already exists");
-        return (StatusCode::OK, String::new());
-    }
-
     let remote_url = format!("https://www.github.com/{}.git", repo);
     eprintln!("looking for remote url: {}", remote_url);
     let (remote_id, repo_id): (u64, u64) = match ctx.conn.lock().unwrap()
@@ -159,26 +142,63 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
         }
     };
 
-    let repo_default_run_pref: Option<String> = ctx.conn.lock().unwrap()
-        .query_row("select default_run_preference from repos where id=?1;", [repo_id], |row| {
-            Ok((row.get(0)).unwrap())
-        })
-        .expect("can query");
+    // push event is in terms of a ref, but we don't know if it's a new commit (yet).
+    // in terms of CI jobs, we care mainly about new commits.
+    // so...
+    // * look up the commit,
+    // * if it known, no new job needed, skip the rest (new ref for existing commit we've already handled some way)
+    // * create a new commit ref
+    // * create a new job (state=pending) for the commit ref
+    // however, for display purposes we do want a fresh understanding of refs, so:
+    // * look up if the ref used to reference another commit in the repo
+    // * if so, the old commit name is now stale and should be marked as such
+    // * create a new name for the head commit pushed here, named the ref that we were told
+    // this is not necessarily sufficient for fully correct ref names, but should be most of the
+    // time! this is intended to keep ref names roughly correct in a push manner, with a secondary
+    // pull mechanism to pull correct names from remotes on a less frequent cadence.
+    let commit_id: Option<u64> = ctx.conn.lock().unwrap()
+        .query_row(ci_lib_core::sql::COMMIT_TO_ID, [sha.clone()], |row| row.get(0))
+        .optional()
+        .expect("can run query");
 
-    let pusher_email = pusher
-        .get("email")
-        .expect("has email")
-        .as_str()
-        .expect("is str");
+    let commit_id = match commit_id {
+        Some(id) => {
+            eprintln!("commit already exists");
+            id
+        }
+        None => {
+            let repo_default_run_pref: Option<String> = ctx.conn.lock().unwrap()
+                .query_row("select default_run_preference from repos where id=?1;", [repo_id], |row| {
+                    Ok((row.get(0)).unwrap())
+                })
+                .expect("can query");
 
-    let job_id = ctx.new_job(remote_id, &sha, Some(pusher_email), repo_default_run_pref).unwrap();
-    let _ = ctx.new_run(job_id, None).unwrap();
+            let pusher_email = pusher
+                .get("email")
+                .expect("has email")
+                .as_str()
+                .expect("is str");
 
-    let notifiers = ci_lib_native::dbctx_ext::notifiers_by_repo(&ctx, repo_id).expect("can get notifiers");
+            let (job_id, commit_id) = ctx.new_job(remote_id, &sha, Some(pusher_email), repo_default_run_pref).unwrap();
+            // at this point we have a commit id, record the ref..
+            let _ = ctx.new_run(job_id, None).unwrap();
 
-    for notifier in notifiers {
-        notifier.tell_pending_job(&ctx, repo_id, &sha, job_id).await.expect("can notify");
-    }
+            let notifiers = ci_lib_native::dbctx_ext::notifiers_by_repo(&ctx, repo_id).expect("can get notifiers");
+
+            for notifier in notifiers {
+                notifier.tell_pending_job(&ctx, repo_id, &sha, job_id).await.expect("can notify");
+            }
+
+            commit_id
+        }
+    };
+
+    let short_ref_name = if ref_name.starts_with("refs/heads/") {
+        &ref_name["refs/heads/".len()..]
+    } else {
+        &ref_name
+    };
+    ctx.update_commit_name(commit_id, short_ref_name).expect("can update ref");
 
     (StatusCode::OK, String::new())
 }
@@ -238,11 +258,9 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         return (StatusCode::NOT_FOUND, Html("<html><body>no such commit</body></html>".to_string()));
     };
 
-    let short_sha = &sha[0..9];
+    let nice_name = ctx.dbctx.nice_name_for_commit(commit_id).expect("can query");
 
-    let (remote_id, repo_id): (u64, u64) = ctx.dbctx.conn.lock().unwrap()
-        .query_row("select id, repo_id from remotes where remote_path=?1;", [&remote_path], |row| Ok((row.get_unwrap(0), row.get_unwrap(1))))
-        .expect("can query");
+    let short_sha = &sha[0..9];
 
     let job = ctx.dbctx.job_by_commit_id(commit_id).expect("can query").expect("job exists");
 
@@ -353,7 +371,13 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     html.push_str("  <body>\n");
     html.push_str("    <pre>\n");
     html.push_str(&format!("repo: {}\n", repo_html));
-    html.push_str(&format!("commit: {}, run: {}\n", remote_commit_elem, run.id));
+    let mut commit_line = String::new();
+    commit_line.push_str("commit: ");
+    commit_line.push_str(&remote_commit_elem);
+    if let Some(name) = nice_name {
+        commit_line.push_str(&format!(" aka <b>{}</b>", name.stringy()));
+    }
+    html.push_str(&format!("{}, run: {}\n", commit_line, run.id));
     html.push_str(&format!("status: {} in {}\n", status_elem, ci_lib_web::display_run_time(&run)));
     if let Some(desc) = run.final_text.as_ref() {
         html.push_str(&format!("  description: {}\n  ", desc));
@@ -572,9 +596,12 @@ async fn handle_repo_summary(Path(path): Path<String>, summary_params: Query<Sum
     for job in last_builds.iter().take(rows) {
         let run = ctx.dbctx.last_run_for_job(job.id).expect("query succeeds").expect("TODO: run exists if job exists (small race if querying while creating job ....");
         let job_commit = ctx.dbctx.commit_sha(job.commit_id).expect("job has a commit");
-        let commit_html = match ci_lib_web::commit_url(&job, &job_commit, &ctx.dbctx) {
-            Some(url) => format!("<a href=\"{}\">{}</a>", url, &job_commit),
-            None => job_commit.clone()
+        let nice_name = ctx.dbctx.nice_name_for_commit(job.commit_id).expect("can try to get a nice name");
+        let commit_html = match (ci_lib_web::commit_url(&job, &job_commit, &ctx.dbctx), nice_name) {
+            (Some(url), Some(name)) => format!("<a href=\"{}\">{}</a> {}", url, &job_commit[..9], name.stringy()),
+            (Some(url), None) => format!("<a href=\"{}\">{}</a>", url, &job_commit[..9]),
+            (None, Some(name)) => format!("{} {}", &job_commit[..9], name.stringy()),
+            (None, None) => format!("{}", &job_commit[..9]),
         };
 
         let job_html = format!("<a href=\"{}\">{}</a>", ci_lib_web::job_url(&job, &job_commit, &ctx.dbctx), job.id);

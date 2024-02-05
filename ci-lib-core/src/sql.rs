@@ -99,6 +99,47 @@ pub enum JobResult {
     Fail = 1,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameState {
+    Fresh = 0,
+    Stale = 1,
+    // this reflects a name that is "nice" in that it's not a full commit hash, but it's not a ref
+    // the commit is known by - it's just... a prefix of the full hash.
+    ShortSha = 2,
+}
+
+impl TryFrom<u8> for NameState {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, String> {
+        match value {
+            0 => Ok(NameState::Fresh),
+            1 => Ok(NameState::Stale),
+            2 => Ok(NameState::ShortSha),
+            other => Err(format!("invalid name state: {}", other)),
+        }
+    }
+}
+
+pub struct CommitName {
+    pub name: String,
+    pub state: NameState,
+}
+
+impl CommitName {
+    pub fn stale(&self) -> bool {
+        self.state != NameState::Fresh
+    }
+
+    pub fn stringy(&self) -> String {
+        match self.state {
+            NameState::Fresh => { self.name.clone() },
+            NameState::Stale => { format!("{} (stale)", self.name) },
+            NameState::ShortSha => { self.name.clone() },
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum RunState {
     Pending = 0,
@@ -164,6 +205,12 @@ pub const CREATE_METRICS_TABLE: &'static str = "\
 
 pub const CREATE_COMMITS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS commits (id INTEGER PRIMARY KEY AUTOINCREMENT, sha TEXT UNIQUE);";
+
+pub const CREATE_COMMIT_NAMES_TABLE: &'static str = "\
+    CREATE TABLE IF NOT EXISTS commit_names (id INTEGER PRIMARY KEY AUTOINCREMENT, commit_id INTEGER, name TEXT, name_state INTEGER);";
+
+pub const CREATE_COMMIT_NAMES_INDEX: &'static str = "\
+    CREATE INDEX IF NOT EXISTS 'names_by_commit' ON commit_names(commit_id);";
 
 pub const CREATE_REPOS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS repos (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -263,6 +310,9 @@ pub const ARTIFACT_BY_ID: &'static str = "\
 
 pub const JOB_BY_ID: &'static str = "\
     select id, source, created_time, remote_id, commit_id, run_preferences from jobs where id=?1";
+
+pub const NAMES_FOR_COMMIT: &'static str = "\
+    select id, name, name_state from commit_names where commit_id=?1 order by id asc;";
 
 pub const METRICS_FOR_RUN: &'static str = "\
     select * from metrics where run_id=?1 order by id asc;";

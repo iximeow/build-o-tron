@@ -161,9 +161,12 @@ pub fn build_repo_index(ctx: &Arc<DbCtx>) -> Result<String, String> {
         let row_html: String = match most_recent_run {
             Some((job, run)) => {
                 let job_commit = ctx.commit_sha(job.commit_id).expect("job has a commit");
-                let commit_html = match commit_url(&job, &job_commit, &ctx) {
-                    Some(url) => format!("<a href=\"{}\">{}</a>", url, &job_commit),
-                    None => job_commit.clone()
+                let nice_name = ctx.nice_name_for_commit(job.commit_id).expect("can try to get a nice name");
+                let commit_html = match (commit_url(&job, &job_commit, &ctx), nice_name) {
+                    (Some(url), Some(name)) => format!("<a href=\"{}\">{}</a> {}", url, &job_commit[..9], name.stringy()),
+                    (Some(url), None) => format!("<a href=\"{}\">{}</a>", url, &job_commit[..9]),
+                    (None, Some(name)) => format!("{} {}", &job_commit[..9], name.stringy()),
+                    (None, None) => format!("{}", &job_commit[..9]),
                 };
 
                 let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx), job.id);

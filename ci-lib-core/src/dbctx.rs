@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use crate::sql;
 
 use crate::sql::ArtifactRecord;
+use crate::sql::CommitName;
 use crate::sql::Run;
 use crate::sql::TokenValidity;
 use crate::sql::MetricRecord;
@@ -37,6 +38,8 @@ impl DbCtx {
         conn.execute(sql::CREATE_JOBS_TABLE, params![]).unwrap();
         conn.execute(sql::CREATE_METRICS_TABLE, params![]).unwrap();
         conn.execute(sql::CREATE_COMMITS_TABLE, params![]).unwrap();
+        conn.execute(sql::CREATE_COMMIT_NAMES_TABLE, params![]).unwrap();
+        conn.execute(sql::CREATE_COMMIT_NAMES_INDEX, params![]).unwrap();
         conn.execute(sql::CREATE_REPOS_TABLE, params![]).unwrap();
         conn.execute(sql::CREATE_REPO_NAME_INDEX, params![]).unwrap();
         conn.execute(sql::CREATE_REMOTES_TABLE, params![]).unwrap();
@@ -60,6 +63,9 @@ impl DbCtx {
 
     pub fn new_commit(&self, sha: &str) -> Result<u64, String> {
         let conn = self.conn.lock().unwrap();
+        // TODO: ... if there's a unique constraint on the commits/sha column and the insert would
+        // be a dupe, is that an error (eek expect()) or is that simply Ok(0)? either way this
+        // should be made to not return the wrong id if there's a race on insert.
         conn
             .execute(
                 "insert into commits (sha) values (?1)",
@@ -245,7 +251,40 @@ impl DbCtx {
         Ok(conn.last_insert_rowid() as u64)
     }
 
-    pub fn new_job(&self, remote_id: u64, sha: &str, pusher: Option<&str>, repo_default_run_pref: Option<String>) -> Result<u64, String> {
+    pub fn update_commit_name(&self, commit_id: u64, name: &str) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+
+        let rows_modified = conn.execute(
+            "insert into commit_names (commit_id, name, name_state) values (?1, ?2, 0);",
+            params![commit_id, name]
+        ).unwrap();
+
+        assert_eq!(1, rows_modified);
+
+        Ok(())
+    }
+
+    pub fn nice_name_for_commit(&self, commit_id: u64) -> Result<Option<CommitName>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut names_query = conn.prepare(sql::NAMES_FOR_COMMIT).unwrap();
+        let mut result = names_query.query([commit_id]).unwrap();
+        let mut best_name: Option<CommitName> = None;
+
+        while let Some(row) = result.next().unwrap() {
+            let (_id, name, name_state): (u64, String, u8) = row.try_into().unwrap();
+            if best_name.is_none() || best_name.as_ref().unwrap().stale() {
+                best_name = Some(CommitName {
+                    name,
+                    state: name_state.try_into().unwrap()
+                });
+            }
+        }
+
+        Ok(best_name)
+    }
+
+    pub fn new_job(&self, remote_id: u64, sha: &str, pusher: Option<&str>, repo_default_run_pref: Option<String>) -> Result<(u64, u64), String> {
         // TODO: potential race: if two remotes learn about a commit at the same time and we decide
         // to create two jobs at the same time, this might return an incorrect id if the insert
         // didn't actually insert a new row.
@@ -267,7 +306,7 @@ impl DbCtx {
 
         let job_id = conn.last_insert_rowid() as u64;
 
-        Ok(job_id)
+        Ok((job_id, commit_id))
     }
 
     pub fn new_run(&self, job_id: u64, host_preference: Option<u32>) -> Result<PendingRun, String> {
