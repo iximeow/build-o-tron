@@ -44,18 +44,18 @@ pub fn duration_as_human_string(duration_ms: u64) -> String {
 }
 
 /// try producing a url for whatever caused this job to be started, if possible
-pub fn commit_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> Option<String> {
+pub fn commit_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> (String, Option<String>) {
     let remote = ctx.remote_by_id(job.remote_id).expect("query succeeds").expect("existing job references existing remote");
 
     match remote.remote_api.as_str() {
         "github" => {
-            Some(format!("{}/commit/{}", remote.remote_url, commit_sha))
+            ("github".to_string(), Some(format!("{}/commit/{}", remote.remote_url, commit_sha)))
         },
         "email" => {
-            None
+            ("email".to_string(), None)
         },
-        _ => {
-            None
+        other => {
+            (other.to_string(), None)
         }
     }
 }
@@ -134,7 +134,7 @@ pub fn build_repo_index(ctx: &Arc<DbCtx>) -> Result<String, String> {
 
     response.push_str("<table class='build-table'>");
     response.push_str("<tr>\n");
-    let headings = ["repo", "last build", "job", "build commit", "duration", "status", "result"];
+    let headings = ["repo", "last build", "commit/job", "remote", "duration", "status", "result"];
     for heading in headings {
         response.push_str(&format!("<th class='row-item'>{}</th>", heading));
     }
@@ -162,14 +162,15 @@ pub fn build_repo_index(ctx: &Arc<DbCtx>) -> Result<String, String> {
             Some((job, run)) => {
                 let job_commit = ctx.commit_sha(job.commit_id).expect("job has a commit");
                 let nice_name = ctx.nice_name_for_commit(job.commit_id).expect("can try to get a nice name");
-                let commit_html = match (commit_url(&job, &job_commit, &ctx), nice_name) {
-                    (Some(url), Some(name)) => format!("<a href=\"{}\">{}</a> {}", url, &job_commit[..9], name.stringy()),
-                    (Some(url), None) => format!("<a href=\"{}\">{}</a>", url, &job_commit[..9]),
-                    (None, Some(name)) => format!("{} {}", &job_commit[..9], name.stringy()),
-                    (None, None) => format!("{}", &job_commit[..9]),
+                let commit_html = match (job_url(&job, &job_commit, &ctx), nice_name) {
+                    (url, Some(name)) => format!("<a href=\"{}\">{}</a> (job {}) {}", url, &job_commit[..9], job.id, name.stringy()),
+                    (url, None) => format!("<a href=\"{}\">{}</a> (job {})", url, &job_commit[..9], job.id),
                 };
 
-                let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx), job.id);
+                let remote_html = match commit_url(&job, &job_commit, &ctx) {
+                    (source, Some(url)) => format!("<a href=\"{}\">{}</a>", url, source),
+                    (source, None) => format!("{}", source),
+                };
 
                 let last_build_time = Utc.timestamp_millis_opt(run.create_time as i64).unwrap().to_rfc2822();
                 let duration = display_run_time(&run);
@@ -186,7 +187,7 @@ pub fn build_repo_index(ctx: &Arc<DbCtx>) -> Result<String, String> {
                     }
                 };
 
-                let entries = [repo_html.as_str(), last_build_time.as_str(), job_html.as_str(), commit_html.as_str(), &duration, &status, &result];
+                let entries = [repo_html.as_str(), last_build_time.as_str(), commit_html.as_str(), remote_html.as_str(), &duration, &status, &result];
                 let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
 
                 let mut row_html = String::new();
@@ -244,8 +245,8 @@ pub fn build_repo_index(ctx: &Arc<DbCtx>) -> Result<String, String> {
 
             let job_commit = ctx.commit_sha(job.commit_id).expect("job has a commit");
             let commit_html = match commit_url(&job, &job_commit, &ctx) {
-                Some(url) => format!("<a href=\"{}\">{}</a>", url, &job_commit),
-                None => job_commit.clone()
+                (source, Some(url)) => format!("<a href=\"{}\">{}</a>", url, source),
+                (source, None) => source
             };
 
             let job_html = format!("<a href=\"{}\">{}</a>", job_url(&job, &job_commit, &ctx), job.id);

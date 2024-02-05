@@ -597,7 +597,7 @@ async fn handle_repo_summary(Path(path): Path<String>, summary_params: Query<Sum
 
     response.push_str("<table class='build-table'>");
     response.push_str("<tr>\n");
-    let headings = ["last build", "job", "build commit", "duration", "status", "result"];
+    let headings = ["last build", "commit/job", "remote", "duration", "status", "result"];
     for heading in headings {
         response.push_str(&format!("<th class='row-item'>{}</th>", heading));
     }
@@ -609,14 +609,15 @@ async fn handle_repo_summary(Path(path): Path<String>, summary_params: Query<Sum
         let run = ctx.dbctx.last_run_for_job(job.id).expect("query succeeds").expect("TODO: run exists if job exists (small race if querying while creating job ....");
         let job_commit = ctx.dbctx.commit_sha(job.commit_id).expect("job has a commit");
         let nice_name = ctx.dbctx.nice_name_for_commit(job.commit_id).expect("can try to get a nice name");
-        let commit_html = match (ci_lib_web::commit_url(&job, &job_commit, &ctx.dbctx), nice_name) {
-            (Some(url), Some(name)) => format!("<a href=\"{}\">{}</a> {}", url, &job_commit[..9], name.stringy()),
-            (Some(url), None) => format!("<a href=\"{}\">{}</a>", url, &job_commit[..9]),
-            (None, Some(name)) => format!("{} {}", &job_commit[..9], name.stringy()),
-            (None, None) => format!("{}", &job_commit[..9]),
+        let commit_html = match (ci_lib_web::job_url(&job, &job_commit, &ctx.dbctx), nice_name) {
+            (url, Some(name)) => format!("<a href=\"{}\">{}</a> (job {}) {}", url, &job_commit[..9], job.id, name.stringy()),
+            (url, None) => format!("<a href=\"{}\">{}</a> (job {})", url, &job_commit[..9], job.id),
         };
 
-        let job_html = format!("<a href=\"{}\">{}</a>", ci_lib_web::job_url(&job, &job_commit, &ctx.dbctx), job.id);
+        let remote_html = match ci_lib_web::commit_url(&job, &job_commit, &ctx.dbctx) {
+            (source, Some(url)) => format!("<a href=\"{}\">{}</a>", url, source),
+            (source, None) => format!("{}", source),
+        };
 
         let last_build_time = Utc.timestamp_millis_opt(run.create_time as i64).unwrap().to_rfc2822();
         let duration = ci_lib_web::display_run_time(&run);
@@ -633,7 +634,7 @@ async fn handle_repo_summary(Path(path): Path<String>, summary_params: Query<Sum
             }
         };
 
-        let entries = [last_build_time.as_str(), job_html.as_str(), commit_html.as_str(), &duration, &status, &result];
+        let entries = [last_build_time.as_str(), commit_html.as_str(), remote_html.as_str(), &duration, &status, &result];
         let entries = entries.iter().chain(std::iter::repeat(&"")).take(headings.len());
 
         let mut row_html = String::new();
