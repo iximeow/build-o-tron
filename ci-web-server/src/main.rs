@@ -14,7 +14,7 @@ use axum::routing::*;
 use axum::Router;
 use axum::response::{IntoResponse, Response, Html};
 use std::net::SocketAddr;
-use axum::extract::{Path, State};
+use axum::extract::{Path, State, Query};
 use http_body::combinators::UnsyncBoxBody;
 use axum::{Error, Json};
 use axum::extract::rejection::JsonRejection;
@@ -507,8 +507,18 @@ async fn handle_get_artifact(Path(path): Path<(String, String)>, State(ctx): Sta
     }
 }
 
-async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<WebserverState>) -> impl IntoResponse {
+#[derive(Debug, Deserialize)]
+struct SummaryParams {
+    rows: Option<usize>,
+}
+
+async fn handle_repo_summary(Path(path): Path<String>, summary_params: Query<SummaryParams>, State(ctx): State<WebserverState>) -> impl IntoResponse {
     eprintln!("get repo summary: {:?}", path);
+
+    const MAX_ROWS: usize = 100;
+    const DEFAULT_ROWS: usize = 10;
+
+    let rows = summary_params.rows.unwrap_or(DEFAULT_ROWS).min(MAX_ROWS).max(DEFAULT_ROWS);
 
     let mut last_builds = Vec::new();
 
@@ -526,7 +536,7 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
     // TODO: display default_run_preference somehow on the web summary?
 
     for remote in ctx.dbctx.remotes_by_repo(repo_id).expect("can get repo from a path") {
-        let mut last_ten_jobs = ctx.dbctx.recent_jobs_from_remote(remote.id, 10).expect("can look up jobs for a repo");
+        let mut last_ten_jobs = ctx.dbctx.recent_jobs_from_remote(remote.id, rows as u64).expect("can look up jobs for a repo");
         last_builds.extend(last_ten_jobs.drain(..));
     }
     last_builds.sort_by_key(|job| -(job.created_time as i64));
@@ -553,7 +563,7 @@ async fn handle_repo_summary(Path(path): Path<String>, State(ctx): State<Webserv
 
     let mut row_num = 0;
 
-    for job in last_builds.iter().take(10) {
+    for job in last_builds.iter().take(rows) {
         let run = ctx.dbctx.last_run_for_job(job.id).expect("query succeeds").expect("TODO: run exists if job exists (small race if querying while creating job ....");
         let job_commit = ctx.dbctx.commit_sha(job.commit_id).expect("job has a commit");
         let commit_html = match ci_lib_web::commit_url(&job, &job_commit, &ctx.dbctx) {
