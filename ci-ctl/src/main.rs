@@ -193,7 +193,7 @@ fn main() {
                                     }
                                 };
                                 let gh = GithubApi { token: &token, webhook_token: &webhook_token };
-                                tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async move {
+                                tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async move {
                                     match gh.has_ci_webhook(remote.as_str()).await {
                                         Ok(present) => {
                                             if !present {
