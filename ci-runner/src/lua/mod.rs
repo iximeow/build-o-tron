@@ -2,6 +2,7 @@ use crate::RunningJob;
 
 use rlua::prelude::*;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub const DEFAULT_RUST_GOODFILE: &'static [u8] = include_bytes!("../../../config/goodfiles/rust.lua");
@@ -15,6 +16,7 @@ pub struct BuildEnv {
 pub struct RunParams {
     _step: Option<String>,
     _name: Option<String>,
+    _env: Option<HashMap<String, String>>,
     cwd: Option<String>,
 }
 
@@ -28,6 +30,7 @@ mod lua_exports {
     use crate::RunningJob;
     use crate::lua::RunParams;
 
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::path::PathBuf;
 
@@ -92,10 +95,27 @@ mod lua_exports {
                         return Err(LuaError::RuntimeError(format!("params[\"cwd\"] must be a string")));
                     }
                 };
+                let env = match table.get("env").expect("can get from table") {
+                    LuaValue::Table(env_params) => {
+                        let mut env: HashMap<String, String> = HashMap::new();
+                        for pair in env_params.pairs::<String, String>() {
+                            let (key, value) = pair.map_err(|e| LuaError::RuntimeError(format!("params[\"env\"] has a key/value pair that is not string to string: {}", e)))?;
+                            env.insert(key, value);
+                        }
+                        Some(env)
+                    },
+                    LuaValue::Nil => {
+                        None
+                    },
+                    _other => {
+                        return Err(LuaError::RuntimeError(format!("params[\"env\"] must be a table")));
+                    }
+                };
 
                 RunParams {
                     _step: step,
                     _name: name,
+                    _env: env,
                     cwd,
                 }
             },
@@ -103,6 +123,7 @@ mod lua_exports {
                 RunParams {
                     _step: None,
                     _name: None,
+                    _env: None,
                     cwd: None,
                 }
             }
@@ -123,7 +144,7 @@ mod lua_exports {
             .build()
             .unwrap();
         rt.block_on(async move {
-            job_ctx.lock().unwrap().run_command(&args, params.cwd.as_ref().map(|x| x.as_str())).await
+            job_ctx.lock().unwrap().run_command(&args, params.cwd.as_ref().map(|x| x.as_str()), params._env).await
                 .map_err(|e| LuaError::RuntimeError(format!("run_command error: {:?}", e)))
         })
     }
@@ -137,7 +158,7 @@ mod lua_exports {
             .build()
             .unwrap();
         let command_output = rt.block_on(async move {
-            job_ctx.lock().unwrap().run_with_output(&args, params.cwd.as_ref().map(|x| x.as_str())).await
+            job_ctx.lock().unwrap().run_with_output(&args, params.cwd.as_ref().map(|x| x.as_str()), params._env).await
                 .map_err(|e| LuaError::RuntimeError(format!("run_command error: {:?}", e)))
         })?;
 

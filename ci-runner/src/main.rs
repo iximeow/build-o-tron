@@ -4,6 +4,7 @@ use rlua::prelude::LuaError;
 use std::sync::{Arc, Mutex};
 use reqwest::{StatusCode, Response};
 use tokio::process::Command;
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::process::ExitStatus;
 use tokio::io::AsyncWrite;
@@ -417,8 +418,13 @@ impl RunningJob {
         }
     }
 
-    fn prep_command(command: &[String], working_dir: Option<&str>) -> (Command, String) {
+    fn prep_command(command: &[String], working_dir: Option<&str>, env_args: Option<HashMap<String, String>>) -> (Command, String) {
         let mut cmd = Command::new(&command[0]);
+        if let Some(env_args) = env_args {
+            for (k, v) in env_args.iter() {
+                cmd.env(k, v);
+            }
+        }
         let cwd = match working_dir {
             Some(dir) => {
                 format!("tmpdir/{}", dir)
@@ -435,8 +441,8 @@ impl RunningJob {
         (cmd, human_name)
     }
 
-    async fn run_with_output(&mut self, command: &[String], working_dir: Option<&str>) -> Result<CommandOutput, String> {
-        let (cmd, human_name) = Self::prep_command(command, working_dir);
+    async fn run_with_output(&mut self, command: &[String], working_dir: Option<&str>, env: Option<HashMap<String, String>>) -> Result<CommandOutput, String> {
+        let (cmd, human_name) = Self::prep_command(command, working_dir, env);
 
         let cmd_res = self.execute_command_capture_output(cmd, &format!("{} log", human_name), &human_name).await?;
 
@@ -446,10 +452,10 @@ impl RunningJob {
         Ok(cmd_res)
     }
 
-    async fn run_command(&mut self, command: &[String], working_dir: Option<&str>) -> Result<(), String> {
+    async fn run_command(&mut self, command: &[String], working_dir: Option<&str>, env: Option<HashMap<String, String>>) -> Result<(), String> {
         self.runner_ctx.report_command_info(CommandInfo::started(command, working_dir, 1)).await.unwrap();
 
-        let (cmd, human_name) = Self::prep_command(command, working_dir);
+        let (cmd, human_name) = Self::prep_command(command, working_dir, env);
 
         let cmd_res = self.execute_command_and_report(cmd, &format!("{} log", human_name), &human_name).await?;
 
