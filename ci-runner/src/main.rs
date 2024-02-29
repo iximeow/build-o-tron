@@ -70,7 +70,7 @@ impl Runner for LocalRunner {
     }
     async fn create_artifact(&self, name: &str, _desc: &str, _build_token: &str) -> Result<Box<dyn AsyncWrite + Unpin + Send>, String> {
         let mut path = self.working_dir.clone();
-        path.push(name);
+        path.push(name.replace("/", "_").replace("\\", "_"));
         let file = OpenOptions::new()
             .read(true)
             .write(true)
