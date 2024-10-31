@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::io::ArtifactDescriptor;
 use crate::notifier::{RemoteNotifier, NotifierConfig};
 
@@ -41,7 +43,7 @@ pub fn notifiers_by_repo(ctx: &DbCtx, repo_id: u64) -> Result<Vec<RemoteNotifier
     Ok(notifiers)
 }
 
-pub async fn reserve_artifact(ctx: &DbCtx, run_id: u64, name: &str, desc: &str) -> Result<ArtifactDescriptor, String> {
+pub async fn reserve_artifact(ctx: &DbCtx, artifact_path: PathBuf, run_id: u64, name: &str, desc: &str) -> Result<ArtifactDescriptor, String> {
     let artifact_id = {
         let created_time = ci_lib_core::now_ms();
         let conn = ctx.conn.lock().unwrap();
@@ -57,5 +59,5 @@ pub async fn reserve_artifact(ctx: &DbCtx, run_id: u64, name: &str, desc: &str) 
         conn.last_insert_rowid() as u64
     };
 
-    ArtifactDescriptor::new(run_id, artifact_id).await
+    ArtifactDescriptor::new(artifact_path, run_id, artifact_id).await
 }

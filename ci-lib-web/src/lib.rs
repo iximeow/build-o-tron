@@ -60,7 +60,7 @@ pub fn commit_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> (String, Opt
     }
 }
 
-/// produce a url to the ci.butactuallyin.space job details page
+/// produce a url to the job details page
 pub fn job_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> String {
     let remote = ctx.remote_by_id(job.remote_id).expect("query succeeds").expect("existing job references existing remote");
 

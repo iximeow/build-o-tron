@@ -186,13 +186,13 @@ fn main() {
                         match remote_kind.as_str() {
                             "github" => {
                                 // attempt to create a webhook now...
-                                let (token, webhook_token) = match NotifierConfig::github_from_file(&full_config_file_path).expect("notifier config is valid") {
-                                    NotifierConfig::GitHub { token, webhook_token } => (token, webhook_token),
+                                let (ci_server, token, webhook_token) = match NotifierConfig::github_from_file(&full_config_file_path).expect("notifier config is valid") {
+                                    NotifierConfig::GitHub { ci_server, token, webhook_token } => (ci_server, token, webhook_token),
                                     _ => {
                                         panic!("unexpected notifier config format, should have been github..")
                                     }
                                 };
-                                let gh = GithubApi { token: &token, webhook_token: &webhook_token };
+                                let gh = GithubApi { ci_server: &ci_server, token: &token, webhook_token: &webhook_token };
                                 tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async move {
                                     match gh.has_ci_webhook(remote.as_str()).await {
                                         Ok(present) => {

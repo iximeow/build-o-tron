@@ -5,6 +5,7 @@ pub mod notifier;
 use axum::http::StatusCode;
 
 pub struct GithubApi<'a> {
+    pub ci_server: &'a str,
     pub token: &'a str,
     pub webhook_token: &'a str,
 }
@@ -60,7 +61,8 @@ impl GithubApi<'_> {
             let url = conf.get("url")
                 .ok_or_else(|| format!("config object does not have url"))?
                 .as_str().ok_or_else(|| format!("config url has url but it not a string"))?;
-            if url.starts_with("https://ci.butactuallyin.space") {
+            
+            if url.starts_with(&format!("http://{}", &self.ci_server)) {
                 return Ok(true);
             }
         }
@@ -69,8 +71,7 @@ impl GithubApi<'_> {
     }
 
     pub async fn create_ci_webhook(&self, remote_path: &str) -> Result<(), String> {
-        let ci_server = "ci.butactuallyin.space";
-        let webhook_url = format!("https://ci.butactuallyin.space/{remote_path}");
+        let webhook_url = format!("https://{}/{remote_path}", &self.ci_server);
 
         let webhook_config = serde_json::json!({
             "name": "web",
@@ -92,7 +93,7 @@ impl GithubApi<'_> {
             .header("authorization", format!("Bearer {}", &self.token))
             .header("accept", "application/vnd.github+json");
 
-        eprintln!("[.] creating webhook on github.com/{remote_path} to send push events to {ci_server}");
+        eprintln!("[.] creating webhook on github.com/{remote_path} to send push events to {}", &self.ci_server);
         let resp = req.send().await;
 
         match resp {

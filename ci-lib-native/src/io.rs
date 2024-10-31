@@ -2,6 +2,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use futures_util::StreamExt;
 use tokio::fs::File;
 use tokio::fs::OpenOptions;
+use std::path::PathBuf;
 use std::task::{Poll, Context};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -97,16 +98,15 @@ pub struct ArtifactDescriptor {
 }
 
 impl ArtifactDescriptor {
-    pub async fn new(job_id: u64, artifact_id: u64) -> Result<Self, String> {
-        // TODO: jobs should be a configurable path
-        let path = format!("artifacts/{}/{}", job_id, artifact_id);
+    pub async fn new(artifact_path: PathBuf, job_id: u64, artifact_id: u64) -> Result<Self, String> {
+        let path = artifact_path.join(format!("{}/{}", job_id, artifact_id));
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
             .open(&path)
             .await
-            .map_err(|e| format!("couldn't open artifact file {}: {}", path, e))?;
+            .map_err(|e| format!("couldn't open artifact file {}: {}", path.to_string_lossy(), e))?;
 
         Ok(ArtifactDescriptor {
             job_id,

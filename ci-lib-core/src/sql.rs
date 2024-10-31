@@ -197,10 +197,10 @@ pub const CREATE_JOBS_TABLE: &'static str = "\
 
 pub const CREATE_METRICS_TABLE: &'static str = "\
     CREATE TABLE IF NOT EXISTS metrics (id INTEGER PRIMARY KEY AUTOINCREMENT,
-        job_id INTEGER,
+        run_id INTEGER,
         name TEXT,
         value TEXT,
-        UNIQUE(job_id, name)
+        UNIQUE(run_id, name)
     );";
 
 pub const CREATE_COMMITS_TABLE: &'static str = "\
@@ -245,6 +245,7 @@ pub const CREATE_RUNS_TABLE: &'static str = "\
         job_id INTEGER,
         artifacts_path TEXT,
         state INTEGER NOT NULL,
+        host_preference INTEGER,
         host_id INTEGER,
         build_token TEXT,
         created_time INTEGER,

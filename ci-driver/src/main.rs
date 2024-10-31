@@ -34,16 +34,16 @@ lazy_static! {
     static ref ACTIVE_TASKS: Mutex<HashMap<u64, Weak<()>>> = Mutex::new(HashMap::new());
 }
 
-fn reserve_artifacts_dir(run: u64) -> std::io::Result<PathBuf> {
-    let mut path: PathBuf = "/root/ixi_ci_server/artifacts/".into();
-    path.push(run.to_string());
-    match std::fs::create_dir(&path) {
+fn reserve_artifacts_dir(mut artifact_path: PathBuf, run: u64) -> std::io::Result<PathBuf> {
+    artifact_path.push(run.to_string());
+
+    match std::fs::create_dir(&artifact_path) {
         Ok(()) => {
-            Ok(path)
+            Ok(artifact_path)
         },
         Err(e) => {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
-                Ok(path)
+                Ok(artifact_path)
             } else {
                 Err(e)
             }
@@ -51,7 +51,7 @@ fn reserve_artifacts_dir(run: u64) -> std::io::Result<PathBuf> {
     }
 }
 
-async fn activate_run(dbctx: Arc<DbCtx>, candidate: RunnerClient, job: &Job, run: &PendingRun) -> Result<(), String> {
+async fn activate_run(dbctx: Arc<DbCtx>, candidate: RunnerClient, artifact_path: PathBuf, job: &Job, run: &PendingRun) -> Result<(), String> {
     eprintln!("activating task {:?}", run);
 
     let now = SystemTime::now()
@@ -64,7 +64,7 @@ async fn activate_run(dbctx: Arc<DbCtx>, candidate: RunnerClient, job: &Job, run
 
     let commit_sha = dbctx.commit_sha(job.commit_id).expect("query succeeds");
 
-    let artifacts: PathBuf = reserve_artifacts_dir(run.id).expect("can reserve a directory for artifacts");
+    let artifacts: PathBuf = reserve_artifacts_dir(artifact_path, run.id).expect("can reserve a directory for artifacts");
 
     eprintln!("running {}", &repo.name);
 
@@ -331,7 +331,7 @@ impl fmt::Debug for RunnerClient {
 }
 
 #[axum_macros::debug_handler]
-async fn handle_artifact(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClient>)>, headers: HeaderMap, artifact_content: BodyStream) -> impl IntoResponse {
+async fn handle_artifact(State(ctx): State<DriverState>, headers: HeaderMap, artifact_content: BodyStream) -> impl IntoResponse {
     eprintln!("artifact request");
     let run_token = match headers.get("x-task-token") {
         Some(run_token) => run_token.to_str().expect("valid string"),
@@ -341,7 +341,7 @@ async fn handle_artifact(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
         }
     };
 
-    let (run, artifact_path, token_validity) = match ctx.0.run_for_token(&run_token).unwrap() {
+    let (run, artifact_path, token_validity) = match ctx.dbctx.run_for_token(&run_token).unwrap() {
         Some(result) => result,
         None => {
             eprintln!("bad artifact post: headers: {:?}\nrun token is not known", headers);
@@ -377,7 +377,7 @@ async fn handle_artifact(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
         }
     };
 
-    let mut artifact = match ci_lib_native::dbctx_ext::reserve_artifact(&ctx.0, run, artifact_name, artifact_desc).await {
+    let mut artifact = match ci_lib_native::dbctx_ext::reserve_artifact(&ctx.dbctx, ctx.artifact_path, run, artifact_name, artifact_desc).await {
         Ok(artifact) => artifact,
         Err(err) => {
             eprintln!("failure to reserve artifact: {:?}", err);
@@ -386,7 +386,7 @@ async fn handle_artifact(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
     };
 
     eprintln!("spawning task...");
-    let dbctx_ref = Arc::clone(&ctx.0);
+    let dbctx_ref = Arc::clone(&ctx.dbctx);
     spawn(async move {
         artifact.store_all(artifact_content).await.unwrap();
         dbctx_ref.finalize_artifact(artifact.artifact_id).await.unwrap();
@@ -402,7 +402,7 @@ struct WorkRequest {
     accepted_pushers: Option<Vec<String>>
 }
 
-async fn handle_next_job(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClient>)>, headers: HeaderMap, mut job_resp: BodyStream) -> impl IntoResponse {
+async fn handle_next_job(State(ctx): State<DriverState>, headers: HeaderMap, mut job_resp: BodyStream) -> impl IntoResponse {
     let _auth_token = match headers.get("authorization") {
         Some(token) => {
             if Some(token.to_str().unwrap_or("")) != AUTH_SECRET.read().unwrap().as_ref().map(|x| &**x) {
@@ -439,7 +439,7 @@ async fn handle_next_job(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
 
     eprintln!("client identifies itself as {:?}", host_info);
 
-    let host_info_id = ctx.0.id_for_host(&host_info).expect("can get a host info id");
+    let host_info_id = ctx.dbctx.id_for_host(&host_info).expect("can get a host info id");
 
     let client = match RunnerClient::new(tx_sender, job_resp, accepted_pushers, host_info_id).await {
         Ok(v) => v,
@@ -449,7 +449,7 @@ async fn handle_next_job(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
         }
     };
 
-    match ctx.1.try_send(client) {
+    match ctx.client_sender.try_send(client) {
         Ok(()) => {
             eprintln!("client requested work...");
             return (StatusCode::OK, resp_body).into_response();
@@ -463,14 +463,25 @@ async fn handle_next_job(State(ctx): State<(Arc<DbCtx>, mpsc::Sender<RunnerClien
     }
 }
 
-async fn make_api_server(dbctx: Arc<DbCtx>) -> (Router, mpsc::Receiver<RunnerClient>) {
+async fn make_api_server(artifact_path: PathBuf, dbctx: Arc<DbCtx>) -> (Router, mpsc::Receiver<RunnerClient>) {
     let (pending_client_sender, pending_client_receiver) = mpsc::channel(8);
 
     let router = Router::new()
         .route("/api/next_job", post(handle_next_job))
         .route("/api/artifact", post(handle_artifact))
-        .with_state((dbctx, pending_client_sender));
+        .with_state(DriverState{
+            artifact_path,
+            dbctx,
+            client_sender: pending_client_sender
+        });
     (router, pending_client_receiver)
+}
+
+#[derive(Clone)]
+struct DriverState {
+    artifact_path: PathBuf,
+    dbctx: Arc<DbCtx>,
+    client_sender: mpsc::Sender<RunnerClient>
 }
 
 #[derive(Deserialize, Serialize)]
@@ -479,6 +490,7 @@ struct DriverConfig {
     key_path: PathBuf,
     config_path: PathBuf,
     db_path: PathBuf,
+    artifact_path: PathBuf,
     server_addr: String,
     auth_secret: String,
 }
@@ -504,7 +516,7 @@ async fn main() {
 
     dbctx.create_tables().unwrap();
 
-    let (api_server, mut channel) = make_api_server(Arc::clone(&dbctx)).await;
+    let (api_server, mut channel) = make_api_server(driver_config.artifact_path.clone(), Arc::clone(&dbctx)).await;
     spawn(axum_server::bind_rustls(driver_config.server_addr.parse().unwrap(), config)
           .serve(api_server.into_make_service()));
 
@@ -519,15 +531,16 @@ async fn main() {
         };
 
         let dbctx = Arc::clone(&dbctx);
+        let artifact_path = driver_config.artifact_path.clone();
         spawn(async move {
             let host_id = candidate.host_id;
-            let res = find_client_task(dbctx, candidate).await;
+            let res = find_client_task(dbctx, candidate, artifact_path).await;
             eprintln!("task client for {}: {:?}", host_id, res);
         });
     }
 }
 
-async fn find_client_task(dbctx: Arc<DbCtx>, mut candidate: RunnerClient) -> Result<(), String> {
+async fn find_client_task(dbctx: Arc<DbCtx>, mut candidate: RunnerClient, artifact_path: PathBuf) -> Result<(), String> {
     let find_client_task_start = std::time::Instant::now();
 
     let (run, job) = 'find_work: loop {
@@ -572,7 +585,7 @@ async fn find_client_task(dbctx: Arc<DbCtx>, mut candidate: RunnerClient) -> Res
     };
 
     eprintln!("enqueueing job {} for alternate run under host id {}", job.id, candidate.host_id);
-    activate_run(Arc::clone(&dbctx), candidate, &job, &run).await?;
+    activate_run(Arc::clone(&dbctx), candidate, artifact_path, &job, &run).await?;
 
     Ok(())
 }

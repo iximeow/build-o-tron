@@ -116,7 +116,8 @@ impl Runner for RemoteServerRunner {
     // TODO: panics if hyper finds the channel is closed. hum
     async fn create_artifact(&self, name: &str, desc: &str, build_token: &str) -> Result<Box<dyn AsyncWrite + Unpin + Send>, String> {
         let (sender, body) = hyper::Body::channel();
-        let resp = self.http.post("https://ci.butactuallyin.space:9876/api/artifact")
+        let url = format!("https://{}/api/artifact", self.host);
+        let resp = self.http.post(url)
             .header("user-agent", "ci-butactuallyin-space-runner")
             .header("x-task-token", build_token)
             .header("x-artifact-name", name)
@@ -609,6 +610,8 @@ async fn run_remote(config_path: String) {
     let host_info = host_info::collect_host_info();
     eprintln!("host info: {:?}", host_info);
 
+    let base_url = format!("https://{}", runner_config.server_address);
+
     loop {
         let (mut sender, body) = hyper::Body::channel();
 
@@ -617,7 +620,7 @@ async fn run_remote(config_path: String) {
             host_info.clone(),
         )).unwrap().into()).await.expect("req");
 
-        let poll = client.post("https://ci.butactuallyin.space:9876/api/next_job")
+        let poll = client.post(format!("{base_url}/api/next_job"))
             .header("user-agent", "ci-butactuallyin-space-runner")
             .header("authorization", runner_config.auth_secret.trim())
             .body(body)
@@ -626,7 +629,7 @@ async fn run_remote(config_path: String) {
 
         match poll {
             Ok(res) => {
-                let mut client = match RemoteServerRunner::new("ci.butactuallyin.space:9876", sender, res).await {
+                let mut client = match RemoteServerRunner::new(&runner_config.server_address, sender, res).await {
                     Ok(client) => client,
                     Err(e) => {
                         eprintln!("failed to initialize client: {:?}", e);
