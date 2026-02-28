@@ -930,7 +930,12 @@ impl HostDesc {
             ("Arm Limited", "8", "0xd0c") => "aarch64 Neoverse N1".to_string(),
             ("GenuineIntel", "6", "85") => "x86_64 Skylake".to_string(),
             ("GenuineIntel", "6", "58") => "x86_64 Ivy Bridge".to_string(),
+            ("GenuineIntel", "6", "106") => "x86_64 Ice Lake".to_string(),
+            ("GenuineIntel", "6", "143") => "x86_64 Sapphire Rapids".to_string(),
             ("AuthenticAMD", "23", "113") => "x86_64 Matisse".to_string(),
+            ("AuthenticAMD", "25", "1") => "x86_64 Milan".to_string(),
+            ("AuthenticAMD", "25", "17") => "x86_64 Genoa".to_string(),
+            ("AuthenticAMD", "26", "68") => "x86_64 Granite Ridge".to_string(),
             (vendor, family, model) => format!("unknown {}:{}:{}", vendor, family, model)
         };
 
