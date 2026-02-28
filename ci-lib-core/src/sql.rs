@@ -399,4 +399,4 @@ pub const RUN_TO_FIELDS: &'static str = "\
 pub const SELECT_ALL_RUNS_WITH_JOB_INFO: &'static str = "\
     select jobs.id as job_id, runs.id as run_id, runs.state, runs.created_time, jobs.commit_id, jobs.run_preferences
     from jobs join runs on jobs.id=runs.job_id
-    oder by runs.created_time asc;";
+    order by runs.created_time asc;";
