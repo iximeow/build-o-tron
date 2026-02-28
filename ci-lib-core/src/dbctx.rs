@@ -235,6 +235,9 @@ impl DbCtx {
             "github-email" => {
                 (remote.to_owned(), "email".to_owned(), format!("https://www.github.com/{}", remote), format!("http://www.github.com/{}.git", remote))
             },
+            "local" => {
+                (remote.to_owned(), "email".to_owned(), remote.to_owned(), remote.to_owned())
+            },
             other => {
                 panic!("unsupported remote kind: {}", other);
             }

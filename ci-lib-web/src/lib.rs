@@ -64,6 +64,11 @@ pub fn commit_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> (String, Opt
 pub fn job_url(job: &Job, commit_sha: &str, ctx: &Arc<DbCtx>) -> String {
     let remote = ctx.remote_by_id(job.remote_id).expect("query succeeds").expect("existing job references existing remote");
 
+    if remote.remote_api == "local" {
+        eprintln!("TODO: hack");
+        return format!("local/{}/{}", remote.remote_path.rsplit("/").next().expect("has slash"), commit_sha);
+    }
+
     if remote.remote_api != "github" {
         eprintln!("job url for remote type {} can't be constructed, i think", &remote.remote_api);
     }

@@ -241,6 +241,9 @@ fn main() {
                         "github-email" => {
                             NotifierConfig::email_from_file(&config_file).unwrap();
                         }
+                        "local" => {
+                            /* no notifier necessary */
+                        }
                         other => {
                             panic!("notifiers for '{}' remotes are not supported", other);
                         }

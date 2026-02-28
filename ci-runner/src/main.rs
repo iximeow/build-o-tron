@@ -481,8 +481,14 @@ impl RemoteServerRunner {
             return Err(format!("bad hello: {:?}", hello));
         }
 
+        let root_buf = std::fs::read("./tls.cert").expect("can load root cert");
+        let root = reqwest::Certificate::from_pem(&root_buf).expect("can parse root");
+
         Ok(Self {
             http: reqwest::ClientBuilder::new()
+                .danger_accept_invalid_certs(true)
+                .add_root_certificate(root)
+                .tls_sni(false)
                 .connect_timeout(Duration::from_millis(1000))
                 .timeout(Duration::from_millis(600000))
                 .build()
@@ -554,6 +560,7 @@ impl RemoteServerRunner {
 #[derive(Deserialize, Serialize)]
 struct RunnerConfig {
     server_address: String,
+    root_cert: String,
     auth_secret: String,
     allowed_pushers: Option<Vec<String>>,
 }
@@ -601,7 +608,12 @@ async fn run_remote(config_path: String) {
         panic!("could not open runner config at '{}': {}", config_path, e);
     });
     let runner_config: RunnerConfig = serde_json::from_reader(runner_file).expect("valid json for RunnerConfig");
+    let root_buf = std::fs::read(runner_config.root_cert).expect("can load root cert");
+    let root = reqwest::Certificate::from_pem(&root_buf).expect("can parse root");
     let client = reqwest::ClientBuilder::new()
+        .danger_accept_invalid_certs(true)
+        .add_root_certificate(root)
+        .tls_sni(false)
         .connect_timeout(Duration::from_millis(1000))
         .timeout(Duration::from_millis(600000))
         .build()
